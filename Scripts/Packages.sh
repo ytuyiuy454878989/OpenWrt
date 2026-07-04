@@ -147,14 +147,14 @@ mkdir -p Package/libcron && wget -O Package/libcron/Makefile https://raw.githubu
 # # luci-app-daed-next
 # git clone https://github.com/sbwml/luci-app-daed-next package/daed-next
 
-git_sparse_clone main https://github.com/kenzok8/small-package daed-next luci-app-daed-next gost luci-app-gost luci-app-adguardhome
+git_sparse_clone main https://github.com/kenzok8/small-package daed-next luci-app-daed-next gost luci-app-gost luci-app-adguardhome luci-app-xunlei
 
 git_sparse_clone main https://github.com/kiddin9/kwrt-packages natter2 luci-app-natter2 luci-app-cloudflarespeedtest luci-app-caddy openwrt-caddy luci-app-nginx-ha luci-app-nginx-manager luci-nginxer luci-app-nginx
 
 # docker
 git_sparse_clone main https://github.com/kiddin9/kwrt-packages luci-app-dockerman luci-app-docker docker-lan-bridge dockerd
 
-# git clone --depth 1 --single-branch https://github.com/breeze303/openwrt-podman package/podman
+git clone --depth 1 --single-branch https://github.com/breeze303/openwrt-podman package/podman
 git clone --depth 1 --single-branch --recursive https://github.com/Zerogiven-OpenWRT-Packages/luci-app-podman package/luci-app-podman
 ./scripts/feeds install -a
 
