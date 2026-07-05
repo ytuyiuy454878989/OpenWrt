@@ -120,12 +120,6 @@ jobs:
           sudo -E apt -yqq clean
           sudo -E systemctl daemon-reload
 
-      - name: Combine Disks(合并磁盘)
-        uses: easimon/maximize-build-space@master
-        with:
-          swap-size-mb: 2048
-          temp-reserve-mb: 100
-          root-reserve-mb: 4096
 
 
       - name: Checkout
