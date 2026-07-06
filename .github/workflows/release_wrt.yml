@@ -3,7 +3,7 @@ name: Release WRT
 run-name: Release - ${{ inputs.model }}
 on:
   schedule:
-   # 每周二编译一次（UTC 时间，北京时间 = UTC+8）；UTC 20:00 = 北京时间 04:00
+  #每周二编译一次（UTC 时间，北京时间 = UTC+8）；UTC 20:00 = 北京时间 04:00
     - cron: 0 20 */1 * 2
   #手动编译
   #workflow_dispatch:
