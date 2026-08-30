@@ -9,11 +9,11 @@ on:
   
   workflow_dispatch:
     inputs:
-      model:
+      ipq_type:
+        description: 'Please select the IPQ type(s) to build. for example: aliyun_ap8220_immwrt,all = all types.'
         required: true
-        description: Device Model
+        default: 'all'
         type: choice
-        default: jdcloud_ipq60xx_immwrt
         options:
           - aliyun_ap8220_immwrt
           - aliyun_ap8220_libwrt
