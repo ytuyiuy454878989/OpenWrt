@@ -12,7 +12,7 @@ on:
       ipq_type:
         description: 'Please select the IPQ type(s) to build. for example: aliyun_ap8220_immwrt,all = all types.'
         required: true
-        default: 'all'
+        default: 'jdcloud_ipq60xx_immwr,jdcloud_ipq60xx_libwrt'
         type: choice
         options:
           - aliyun_ap8220_immwrt
