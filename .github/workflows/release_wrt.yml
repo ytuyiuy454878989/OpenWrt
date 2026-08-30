@@ -38,8 +38,9 @@ on:
           - x64_immwrt
 
 #CI权限
-permissions: write-all
-
+permissions:
+  contents: write
+  actions: write
 #CI任务
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
