@@ -1,5 +1,5 @@
 #CI项目
-name: Release WRT
+name: 构建和发布固件Release WRT
 run-name: Release - ${{ inputs.model }}
 on:
   schedule:
@@ -9,11 +9,11 @@ on:
   
   workflow_dispatch:
     inputs:
-      ipq_type:
-        description: 'Please select the IPQ type(s) to build. for example: aliyun_ap8220_immwrt,all = all types.'
+      model:
         required: true
-        default: 'jdcloud_ipq60xx_immwr,jdcloud_ipq60xx_libwrt'
+        description: Device Model
         type: choice
+        default: jdcloud_ipq60xx_immwrt
         options:
           - aliyun_ap8220_immwrt
           - aliyun_ap8220_libwrt
@@ -36,7 +36,6 @@ on:
           - zn_m2_immwrt
           - zn_m2_libwrt
           - x64_immwrt
-
 #CI权限
 permissions:
   contents: write
@@ -44,14 +43,12 @@ permissions:
 #CI任务
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
 jobs:
   build:
     strategy:
       matrix:
         os: [ubuntu-24.04]
     runs-on: ${{ matrix.os }}
-
     steps:
       - name: Check Server Performance(检查服务器性能)
         run: |
@@ -66,7 +63,6 @@ jobs:
           echo -e "$(sudo lshw -short -C memory | grep GiB) \n"
           echo "--------------------------硬盘信息--------------------------"
           echo "硬盘数量：$(ls /dev/sd* | grep -v [1-9] | wc -l)" && df -hT
-
       # 前置磁盘扩容清理（移到最前，防止依赖安装时磁盘不足）
       - name: Free Disk Space(清理磁盘空间)
         uses: endersonmenezes/free-disk-space@v3
@@ -82,7 +78,6 @@ jobs:
           rm_cmd: "rm"
           rmz_version: "3.1.1"
           testing: false
-
       # 完整编译依赖补充：增加golang+证书修复xray编译
       - name: Build System Setup(安装依赖环境)
         run: |
@@ -94,10 +89,8 @@ jobs:
           sudo -E apt -yqq autoclean
           sudo -E apt -yqq clean
           sudo -E systemctl daemon-reload
-
       - name: Checkout
         uses: actions/checkout@v7.0.0
-
       - name: Set Build Date and Timezone
         run: |
           sudo -E timedatectl set-timezone "Asia/Shanghai"
@@ -105,25 +98,38 @@ jobs:
           echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
           export BUILD_SRC=$(awk -F"=" '/REPO_URL/ {print $NF}' "./wrt_core/compilecfg/${{ inputs.model }}.ini")
           echo "BUILD_SRC=$BUILD_SRC" >> $GITHUB_ENV
-
       - name: Pre Clone
         run: |
           for script in $(find . -name "*.sh"); do
             chmod +x "$script"
           done
           ./wrt_core/pre_clone_action.sh ${{ inputs.model }}
-
+      #====================【新增修复步骤 START】====================
+      - name: Fix luci-app-mosdns dependency(修复mosdns geo2txt依赖)
+        run: |
+          cd ./action_build
+          # 删除原有旧mosdns、v2ray-geodata，避免冲突
+          rm -rf package/luci-app-mosdns
+          rm -rf feeds/packages/net/v2ray-geodata
+          rm -rf package/mosdns
+          # 拉取sbwml v5完整版mosdns套件（自带geo2txt,v2dat）
+          git clone https://github.com/sbwml/luci-app-mosdns -b v5 package/mosdns
+          #拉取geodata规则库
+          git clone https://github.com/sbwml/v2ray-geodata package/v2ray-geodata
+          #更新feeds，让编译系统识别新增依赖包
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          cd -
+      #====================【新增修复步骤 END】====================
       # 【关键修复】替换Xray源码地址为ghproxy加速，解决拉取失败Error255
       - name: Replace Xray-core Git Source Mirror
         run: |
           # 批量替换所有xray-core包的GitHub地址
           find ./ -path "*package/xray-core/Makefile" -type f -exec sed -i 's|https://github.com/XTLS/Xray-core.git|https://mirror.ghproxy.com/https://github.com/XTLS/Xray-core.git|g' {} \; || true
-
       # 构建前清空旧编译缓存，stamp残留是install报错主要诱因
       - name: Clean Old Build Cache Before Compile
         run: |
           rm -rf ./action_build/build_dir ./action_build/dl ./action_build/tmp ./action_build/staging_dir || true
-
       # 移除staging_dir缓存，避免旧包污染导致install 255，仅保留ccache
       - name: Cache Dependencies
         uses: actions/cache@v6.1.0
@@ -133,11 +139,9 @@ jobs:
           key: ${{ matrix.os }}-${{ hashFiles('**/repo_flag') }}-${{ env.BUILD_DATE }}
           restore-keys: |
             ${{ matrix.os }}-${{ hashFiles('**/repo_flag') }}-
-
       - name: Check Scripts(将所有sh文件赋予执行权限)
         run: |
           find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\)$" -exec dos2unix {} \; -exec chmod +x {} \;
-
       - name: Check Caches
         id: check-cache
         if: env.WRT_TEST != 'true'
@@ -149,7 +153,6 @@ jobs:
             ./wrt/.ccache
             ./wrt/staging_dir/host*
             ./wrt/staging_dir/tool*
-
       - name: Refresh the cache
         run: |
           if [ -d "./action_build/staging_dir" ]; then
@@ -157,14 +160,12 @@ jobs:
                 find "$dir" -type f -exec touch {} +
             done
           fi
-
       - name: Machine Information (Pre-build)
         run: |
           echo "=============== Pre-build Snapshot ==============="
           echo "Time: $(date '+%F %T %Z')"
           echo "Runner: ${RUNNER_NAME} (${RUNNER_OS}/${RUNNER_ARCH})"
           echo "Kernel: $(uname -r)"
-          echo "Uptime: $(uptime -p)"
           echo "=================================================="
           echo "[CPU]"
           lscpu | grep -E "Model name|Architecture|CPU\\(s\\)|Thread\\(s\\) per core|Core\\(s\\) per socket|CPU max MHz"
@@ -184,15 +185,12 @@ jobs:
           du -sh ./action_build/staging_dir 2>/dev/null || true
           du -sh ./firmware 2>/dev/null || true
           echo "=================================================="
-
       # 【关键修复】编译脚本传入V=sc输出完整日志，定位xray真实报错
       - name: Build Firmware(编译固件)
         run: export BUILD_VERBOSE="V=sc" && ./build.sh ${{ inputs.model }}
-
       - name: Get Kernel Verion
         run: |
           echo "KVER=$(grep -oP "^kernel.*" ./firmware/*.manifest | grep -oP "[4-6]\.[0-9]{1,3}\.[0-9]{1,3}")" >> $GITHUB_ENV
-
       - name: Delete Old Cache
         run: |
           gh cache list --key ${{ matrix.os }}-${{ hashFiles('**/repo_flag') }}- --json key --jq '.[] | .key' | while read -r key; do
@@ -200,7 +198,6 @@ jobs:
           done
           echo "========cache status========"
           echo "ccache: $(du -sh ./action_build/.ccache | cut -f 1)"
-
       - name: Machine Information (Post-build)(机器信息)
         run: |
           echo "=============== Post-build Snapshot ==============="
@@ -225,7 +222,6 @@ jobs:
           du -sh ./firmware 2>/dev/null || true
           echo "Firmware file count: $(ls -1 ./firmware 2>/dev/null | wc -l)"
           echo "===================================================="
-
       - name: Package OpenWrt Firmware(打包固件)
         if: ${{ inputs.model == 'n1_immwrt' }}
         uses: unifreq/openwrt_packit@8007d3efd49bb42aa20c5755a50af21dc7a438e1
@@ -234,7 +230,6 @@ jobs:
           PACKAGE_SOC: s905d
           KERNEL_VERSION_NAME: 6.6.y
           WHOAMI: YooY
-
       - name: Prepare Release Body
         run: |
           echo "云编译发布" > release_body.txt
@@ -244,14 +239,12 @@ jobs:
           echo "LAN地址: 192.168.1.1" >> release_body.txt
           echo "插件：" >> release_body.txt
           echo "$(grep -oP "luci-app(-[a-zA-Z0-9]{1,}){1,}" ./firmware/*.manifest | awk -F":" '{print $NF}')"  >> release_body.txt
-
       - name: Release Firmware(发布固件)
         uses: softprops/action-gh-release@v3.0.1
         with:
           tag_name: ${{ env.BUILD_DATE }}_${{ inputs.model }}
           files: ${{ inputs.model == 'n1_immwrt' && env.PACKAGED_OUTPUTPATH || './firmware' }}/*.*
           body_path: ./release_body.txt
-
       - name: Post-clean Disk Space
         if: always()
         run: |
