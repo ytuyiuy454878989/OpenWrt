@@ -98,6 +98,8 @@ jobs:
           echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
           export BUILD_SRC=$(awk -F"=" '/REPO_URL/ {print $NF}' "./wrt_core/compilecfg/${{ inputs.model }}.ini")
           echo "BUILD_SRC=$BUILD_SRC" >> $GITHUB_ENV
+          echo "====打印源码地址，校验ini读取是否成功===="
+          echo "BUILD_SRC = $BUILD_SRC"
       - name: Pre Clone
         run: |
           set -x
@@ -106,6 +108,22 @@ jobs:
           done
           ./wrt_core/pre_clone_action.sh ${{ inputs.model }}
           echo "====pre_clone执行完成，当前目录ls输出===="
+          ls -la
+          echo "====查找action_build目录位置===="
+          find . -type d -name "action_build"
+      # =========新增调试+软链接兜底步骤==========
+      - name: Debug & Symlink action_build
+        run: |
+          set -x
+          # 情况1：脚本把源码克隆到wrt_core/action_build
+          if [ -d "./wrt_core/action_build" ]; then
+            ln -s ./wrt_core/action_build ./action_build
+            echo "✅ 检测到wrt_core内action_build，创建软链接到根目录"
+          fi
+          # 情况2：如果目录不存在，尝试直接创建（防止后续命令报错）
+          if [ ! -d "./action_build" ]; then
+            echo "⚠️  原始脚本未生成action_build目录！"
+          fi
           ls -la
       # =====新增：校验源码是否克隆成功=====
       - name: Verify action_build exists
