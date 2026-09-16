@@ -100,10 +100,13 @@ jobs:
           echo "BUILD_SRC=$BUILD_SRC" >> $GITHUB_ENV
       - name: Pre Clone
         run: |
+          set -x
           for script in $(find . -name "*.sh"); do
             chmod +x "$script"
           done
           ./wrt_core/pre_clone_action.sh ${{ inputs.model }}
+          echo "====pre_clone执行完成，当前目录ls输出===="
+          ls -la
       # =====新增：校验源码是否克隆成功=====
       - name: Verify action_build exists
         run: |
@@ -151,17 +154,7 @@ jobs:
       - name: Check Scripts(将所有sh文件赋予执行权限)
         run: |
           find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\)$" -exec dos2unix {} \; -exec chmod +x {} \;
-      - name: Check Caches
-        id: check-cache
-        if: env.WRT_TEST != 'true'
-        uses: actions/cache@main
-        with:
-          key: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{env.WRT_HASH}}
-          restore-keys: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}
-          path: |
-            ./wrt/.ccache
-            ./wrt/staging_dir/host*
-            ./wrt/staging_dir/tool*
+      # =========删除无效Check Caches步骤=========
       - name: Refresh the cache
         run: |
           if [ -d "./action_build/staging_dir" ]; then
@@ -229,7 +222,6 @@ jobs:
           echo "[Build Outputs]"
           du -sh ./action_build/.ccache 2>/dev/null || true
           du -sh ./action_build/staging_dir 2>/dev/null || true
-          du -sh ./firmware 2>/dev/null || true
           echo "Firmware file count: $(ls -1 ./firmware 2>/dev/null | wc -l)"
           echo "===================================================="
       - name: Package OpenWrt Firmware(打包固件)
