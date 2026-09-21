@@ -1,5 +1,5 @@
 #CI项目
-name: 构建和发布固件-Librt-Release WRT
+name: 构建和发布固件-Librt--Release WRT
 run-name: Release - ${{ inputs.model }}
 on:
   schedule:
