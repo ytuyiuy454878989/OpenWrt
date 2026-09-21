@@ -1,5 +1,5 @@
 #CI项目
-name: 构建和发布固件Release WRT
+name: 构建和发布固件-Librt-Release WRT
 run-name: Release - ${{ inputs.model }}
 on:
   schedule:
@@ -98,59 +98,66 @@ jobs:
           echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
           export BUILD_SRC=$(awk -F"=" '/REPO_URL/ {print $NF}' "./wrt_core/compilecfg/${{ inputs.model }}.ini")
           echo "BUILD_SRC=$BUILD_SRC" >> $GITHUB_ENV
+      # 调试：打印ini配置
+      - name: Check ini config
+        run: |
+          echo "当前编译model: ${{ inputs.model }}"
+          echo "ini文件路径: ./wrt_core/compilecfg/${{ inputs.model }}.ini"
+          cat ./wrt_core/compilecfg/${{ inputs.model }}.ini
       - name: Pre Clone
         run: |
+          set -euo pipefail
           for script in $(find . -name "*.sh"); do
             chmod +x "$script"
           done
           ./wrt_core/pre_clone_action.sh ${{ inputs.model }}
+          ret=$?
+          echo "pre_clone_action.sh exit code = $ret"
+          if [ $ret -ne 0 ]; then
+            echo "pre_clone_action.sh 执行失败！退出码 $ret"
+            exit $ret
+          fi
           echo "===== After pre_clone directory list ====="
           ls -la
           echo "=========================================="
-      #====================【修复：mosdns依赖，增加目录校验，pushd/popd替代cd】====================
+      #==================== mosdns依赖修复，目录改为libwrt ====================
       - name: Fix luci-app-mosdns dependency(修复mosdns geo2txt依赖)
         run: |
-          if [ ! -d "./action_build" ]; then
-            echo "ERROR: action_build 目录不存在！pre_clone_action.sh 执行异常！"
+          if [ ! -d "./libwrt" ]; then
+            echo "ERROR: libwrt 目录不存在！pre_clone_action.sh 执行异常！"
             ls -la
             exit 1
           fi
-          pushd ./action_build
-          # 删除原有旧mosdns、v2ray-geodata，避免冲突
+          pushd ./libwrt
           rm -rf package/luci-app-mosdns
           rm -rf feeds/packages/net/v2ray-geodata
           rm -rf package/mosdns
-          # 拉取sbwml v5完整版mosdns套件（自带geo2txt,v2dat）
           git clone https://github.com/sbwml/luci-app-mosdns -b v5 package/mosdns
-          #拉取geodata规则库
           git clone https://github.com/sbwml/v2ray-geodata package/v2ray-geodata
-          #更新feeds，让编译系统识别新增依赖包
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           popd
       #====================【修复步骤 END】====================
-      # 【关键修复】替换Xray源码地址为ghproxy加速，解决拉取失败Error255
+      # Xray-core 替换ghproxy镜像
       - name: Replace Xray-core Git Source Mirror
         run: |
-          # 批量替换所有xray-core包的GitHub地址
-          find ./action_build -path "*package/xray-core/Makefile" -type f -exec sed -i 's|https://github.com/XTLS/Xray-core.git|https://mirror.ghproxy.com/https://github.com/XTLS/Xray-core.git|g' {} \; || true
-      # 构建前清空旧编译缓存，stamp残留是install报错主要诱因
+          find ./libwrt -path "*package/xray-core/Makefile" -type f -exec sed -i 's|https://github.com/XTLS/Xray-core.git|https://mirror.ghproxy.com/https://github.com/XTLS/Xray-core.git|g' {} \; || true
+      # 构建前清空旧编译缓存
       - name: Clean Old Build Cache Before Compile
         run: |
-          rm -rf ./action_build/build_dir ./action_build/dl ./action_build/tmp ./action_build/staging_dir || true
-      # 移除staging_dir缓存，避免旧包污染导致install 255，仅保留ccache
+          rm -rf ./libwrt/build_dir ./libwrt/dl ./libwrt/tmp ./libwrt/staging_dir || true
+      # Cache Dependencies
       - name: Cache Dependencies
         uses: actions/cache@v6.1.0
         with:
           path: |
-            ./action_build/.ccache
+            ./libwrt/.ccache
           key: ${{ matrix.os }}-${{ hashFiles('**/repo_flag') }}-${{ env.BUILD_DATE }}
           restore-keys: |
             ${{ matrix.os }}-${{ hashFiles('**/repo_flag') }}-
       - name: Check Scripts(将所有sh文件赋予执行权限)
         run: |
           find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\)$" -exec dos2unix {} \; -exec chmod +x {} \;
-      # 修复：actions/cache@main → v6.1.0；路径修正为action_build，原./wrt路径无效
       - name: Check Caches
         id: check-cache
         if: env.WRT_TEST != 'true'
@@ -159,13 +166,13 @@ jobs:
           key: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{env.WRT_HASH}}
           restore-keys: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}
           path: |
-            ./action_build/.ccache
-            ./action_build/staging_dir/host*
-            ./action_build/staging_dir/tool*
+            ./libwrt/.ccache
+            ./libwrt/staging_dir/host*
+            ./libwrt/staging_dir/tool*
       - name: Refresh the cache
         run: |
-          if [ -d "./action_build/staging_dir" ]; then
-            find "./action_build/staging_dir" -type d -name "stamp" -not -path "*target*" | while read -r dir; do
+          if [ -d "./libwrt/staging_dir" ]; then
+            find "./libwrt/staging_dir" -type d -name "stamp" -not -path "*target*" | while read -r dir; do
                 find "$dir" -type f -exec touch {} +
             done
           fi
@@ -190,11 +197,10 @@ jobs:
           echo "[Workspace]"
           echo "GITHUB_WORKSPACE=${GITHUB_WORKSPACE}"
           du -sh "${GITHUB_WORKSPACE}" 2>/dev/null || true
-          du -sh ./action_build/.ccache 2>/dev/null || true
-          du -sh ./action_build/staging_dir 2>/dev/null || true
+          du -sh ./libwrt/.ccache 2>/dev/null || true
+          du -sh ./libwrt/staging_dir 2>/dev/null || true
           du -sh ./firmware 2>/dev/null || true
           echo "=================================================="
-      # 【关键修复】编译脚本传入V=sc完整日志，注意：需要build.sh读取BUILD_VERBOSE变量才生效
       - name: Build Firmware(编译固件)
         run: export BUILD_VERBOSE="V=sc" && ./build.sh ${{ inputs.model }}
       - name: Get Kernel Verion
@@ -206,7 +212,7 @@ jobs:
             gh cache delete "$key"
           done
           echo "========cache status========"
-          echo "ccache: $(du -sh ./action_build/.ccache | cut -f 1)"
+          echo "ccache: $(du -sh ./libwrt/.ccache | cut -f 1)"
       - name: Machine Information (Post-build)(机器信息)
         run: |
           echo "=============== Post-build Snapshot ==============="
@@ -227,7 +233,8 @@ jobs:
           df -hi
           echo "===================================================="
           echo "[Build Outputs]"
-          du -sh ./action_build/.ccache 2>/dev/null || true
+          du -sh ./libwrt/.ccache 2>/dev/null || true
+          du -sh ./libwrt/staging_dir 2>/dev/null || true
           du -sh ./firmware 2>/dev/null || true
           echo "Firmware file count: $(ls -1 ./firmware 2>/dev/null | wc -l)"
           echo "===================================================="
@@ -239,7 +246,6 @@ jobs:
           PACKAGE_SOC: s905d
           KERNEL_VERSION_NAME: 6.6.y
           WHOAMI: YooY
-          # 注意：如果实际内核不是6.6.y，打包会失败，后续可改为读取环境变量KVER
       - name: Prepare Release Body
         run: |
           echo "云编译发布" > release_body.txt
@@ -258,8 +264,8 @@ jobs:
       - name: Post-clean Disk Space
         if: always()
         run: |
-          rm -rf ./action_build/build_dir 2>/dev/null || true
-          rm -rf ./action_build/dl 2>/dev/null || true
+          rm -rf ./libwrt/build_dir 2>/dev/null || true
+          rm -rf ./libwrt/dl 2>/dev/null || true
           sudo apt-get clean -y 2>/dev/null || true
           echo "===== Disk Status After Post-clean ====="
           df -hT
