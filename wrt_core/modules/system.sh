@@ -477,7 +477,15 @@ fix_opkg_check() {
     fi
 }
 
+
 fix_netfilter_kmod_clash() {
+    local KERN_VER=$(grep "^LINUX_VERSION=" "${BUILD_DIR}/package/kernel/linux/Makefile" | awk -F'=' '{print $2}')
+    # 6.12 / 6.18 直接跳过本补丁
+    if [[ $KERN_VER == 6.12* || $KERN_VER == 6.18* ]]; then
+        echo "Linux ${KERN_VER}, skip netfilter kmod clash workaround."
+        return 0
+    fi
+
     local include_netfilter_mk="$BUILD_DIR/include/netfilter.mk"
     local netfilter_mk="$BUILD_DIR/package/kernel/linux/modules/netfilter.mk"
 
