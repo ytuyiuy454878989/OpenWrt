@@ -6,7 +6,7 @@ on:
     # 每 3 天编译一次（UTC 时间，北京时间 = UTC+8）
     # UTC 20:00 = 北京时间 04:00
     - cron: '0 20 */3 * *'
-  
+
   workflow_dispatch:
     inputs:
       model:
@@ -98,46 +98,24 @@ jobs:
           echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
           export BUILD_SRC=$(awk -F"=" '/REPO_URL/ {print $NF}' "./wrt_core/compilecfg/${{ inputs.model }}.ini")
           echo "BUILD_SRC=$BUILD_SRC" >> $GITHUB_ENV
-          echo "====打印源码地址，校验ini读取是否成功===="
-          echo "BUILD_SRC = $BUILD_SRC"
       - name: Pre Clone
         run: |
-          set -x
           for script in $(find . -name "*.sh"); do
             chmod +x "$script"
           done
           ./wrt_core/pre_clone_action.sh ${{ inputs.model }}
-          echo "====pre_clone执行完成，当前目录ls输出===="
+          echo "===== After pre_clone directory list ====="
           ls -la
-          echo "====查找action_build目录位置===="
-          find . -type d -name "action_build"
-      # =========新增调试+软链接兜底步骤==========
-      - name: Debug & Symlink action_build
-        run: |
-          set -x
-          # 情况1：脚本把源码克隆到wrt_core/action_build
-          if [ -d "./wrt_core/action_build" ]; then
-            ln -s ./wrt_core/action_build ./action_build
-            echo "✅ 检测到wrt_core内action_build，创建软链接到根目录"
-          fi
-          # 情况2：如果目录不存在，尝试直接创建（防止后续命令报错）
-          if [ ! -d "./action_build" ]; then
-            echo "⚠️  原始脚本未生成action_build目录！"
-          fi
-          ls -la
-      # =====新增：校验源码是否克隆成功=====
-      - name: Verify action_build exists
-        run: |
-          ls -la
-          if [ ! -d "./action_build" ];then
-            echo "::error:: ❌ pre_clone_action.sh 克隆源码失败，action_build目录不存在！"
-            exit 1
-          fi
-          echo "✅ action_build目录存在，继续编译"
-      #====================【新增修复步骤 START】====================
+          echo "=========================================="
+      #====================【修复：mosdns依赖，增加目录校验，pushd/popd替代cd】====================
       - name: Fix luci-app-mosdns dependency(修复mosdns geo2txt依赖)
         run: |
-          cd ./action_build
+          if [ ! -d "./action_build" ]; then
+            echo "ERROR: action_build 目录不存在！pre_clone_action.sh 执行异常！"
+            ls -la
+            exit 1
+          fi
+          pushd ./action_build
           # 删除原有旧mosdns、v2ray-geodata，避免冲突
           rm -rf package/luci-app-mosdns
           rm -rf feeds/packages/net/v2ray-geodata
@@ -149,13 +127,13 @@ jobs:
           #更新feeds，让编译系统识别新增依赖包
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          cd -
-      #====================【新增修复步骤 END】====================
+          popd
+      #====================【修复步骤 END】====================
       # 【关键修复】替换Xray源码地址为ghproxy加速，解决拉取失败Error255
       - name: Replace Xray-core Git Source Mirror
         run: |
           # 批量替换所有xray-core包的GitHub地址
-          find ./ -path "*package/xray-core/Makefile" -type f -exec sed -i 's|https://github.com/XTLS/Xray-core.git|https://mirror.ghproxy.com/https://github.com/XTLS/Xray-core.git|g' {} \; || true
+          find ./action_build -path "*package/xray-core/Makefile" -type f -exec sed -i 's|https://github.com/XTLS/Xray-core.git|https://mirror.ghproxy.com/https://github.com/XTLS/Xray-core.git|g' {} \; || true
       # 构建前清空旧编译缓存，stamp残留是install报错主要诱因
       - name: Clean Old Build Cache Before Compile
         run: |
@@ -172,7 +150,18 @@ jobs:
       - name: Check Scripts(将所有sh文件赋予执行权限)
         run: |
           find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\)$" -exec dos2unix {} \; -exec chmod +x {} \;
-      # =========删除无效Check Caches步骤=========
+      # 修复：actions/cache@main → v6.1.0；路径修正为action_build，原./wrt路径无效
+      - name: Check Caches
+        id: check-cache
+        if: env.WRT_TEST != 'true'
+        uses: actions/cache@v6.1.0
+        with:
+          key: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{env.WRT_HASH}}
+          restore-keys: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}
+          path: |
+            ./action_build/.ccache
+            ./action_build/staging_dir/host*
+            ./action_build/staging_dir/tool*
       - name: Refresh the cache
         run: |
           if [ -d "./action_build/staging_dir" ]; then
@@ -205,7 +194,7 @@ jobs:
           du -sh ./action_build/staging_dir 2>/dev/null || true
           du -sh ./firmware 2>/dev/null || true
           echo "=================================================="
-      # 【关键修复】编译脚本传入V=sc输出完整日志，定位xray真实报错
+      # 【关键修复】编译脚本传入V=sc完整日志，注意：需要build.sh读取BUILD_VERBOSE变量才生效
       - name: Build Firmware(编译固件)
         run: export BUILD_VERBOSE="V=sc" && ./build.sh ${{ inputs.model }}
       - name: Get Kernel Verion
@@ -239,7 +228,7 @@ jobs:
           echo "===================================================="
           echo "[Build Outputs]"
           du -sh ./action_build/.ccache 2>/dev/null || true
-          du -sh ./action_build/staging_dir 2>/dev/null || true
+          du -sh ./firmware 2>/dev/null || true
           echo "Firmware file count: $(ls -1 ./firmware 2>/dev/null | wc -l)"
           echo "===================================================="
       - name: Package OpenWrt Firmware(打包固件)
@@ -250,6 +239,7 @@ jobs:
           PACKAGE_SOC: s905d
           KERNEL_VERSION_NAME: 6.6.y
           WHOAMI: YooY
+          # 注意：如果实际内核不是6.6.y，打包会失败，后续可改为读取环境变量KVER
       - name: Prepare Release Body
         run: |
           echo "云编译发布" > release_body.txt
