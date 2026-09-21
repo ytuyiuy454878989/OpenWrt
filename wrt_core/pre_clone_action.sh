@@ -46,7 +46,7 @@ if [ -d "$BUILD_DIR" ];then
   rm -rf "$BUILD_DIR"
 fi
 
-echo "开始 git clone --depth 1 -b $REPO_BRANCH $REPO_URL $BUILD_DIR"
+echo "开始 git clone -b $REPO_BRANCH $REPO_URL $BUILD_DIR"
 git clone -b "$REPO_BRANCH" "$REPO_URL" "$BUILD_DIR"
 
 # GitHub Action 移除国内下载源
