@@ -3,9 +3,9 @@ name: 构建和发布固件Release WRT
 run-name: Release - ${{ inputs.model }}
 on:
   schedule:
-    # 每 3 天编译一次（UTC 时间，北京时间 = UTC+8）
-    # UTC 20:00 = 北京时间 04:00
-    - cron: '0 20 */3 * *'
+# 每 3 天编译一次（UTC 时间，北京时间 = UTC+8）
+# UTC 20:00 = 北京时间 04:00
+    - cron: '0 20 */3 * *'#→ Runs at 20:00, every 3 days
   workflow_dispatch:
     inputs:
       model:
@@ -35,255 +35,145 @@ on:
           - zn_m2_immwrt
           - zn_m2_libwrt
           - x64_immwrt
-
-#CI权限
 permissions:
   contents: write
   actions: write
 
-#CI任务
 env:
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  BUILD_FOLDER: openwrt
+
 jobs:
   build:
-    strategy:
-      matrix:
-        os: [ubuntu-24.04]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-22.04
     steps:
-      - name: Check Server Performance(检查服务器性能)
-        run: |
-          echo "警告⚠"
-          echo "分配的服务器性能有限，若选择的插件过多，务必注意CPU性能！"
-          echo -e "已知CPU型号（降序）：7763，8370C，8272CL，8171M，E5-2673 \n"
-          echo "--------------------------CPU信息--------------------------"
-          echo "CPU物理数量：$(cat /proc/cpuinfo | grep "physical id" | sort | uniq | wc -l)"
-          echo -e "CPU核心信息：$(cat /proc/cpuinfo | grep name | cut -f2 -d: | uniq -c) \n"
-          echo "--------------------------内存信息--------------------------"
-          echo "已安装内存详细信息："
-          echo -e "$(sudo lshw -short -C memory | grep GiB) \n"
-          echo "--------------------------硬盘信息--------------------------"
-          echo "硬盘数量：$(ls /dev/sd* | grep -v [1-9] | wc -l)" && df -hT
-
-      # 前置磁盘扩容清理（移到最前，防止依赖安装时磁盘不足）
-      - name: Free Disk Space(清理磁盘空间)
-        uses: endersonmenezes/free-disk-space@v3
+      - name: Checkout 当前构建仓库
+        uses: actions/checkout@v4
         with:
-          remove_android: true
-          remove_dotnet: true
-          remove_haskell: true
-          remove_tool_cache: true
-          remove_swap: true
-          remove_packages: "azure-cli google-cloud-cli microsoft-edge-stable google-chrome-stable firefox postgresql* temurin-* *llvm* mysql* dotnet-sdk-*"
-          remove_packages_one_command: true
-          remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
-          rm_cmd: "rm"
-          rmz_version: "3.1.1"
-          testing: false
+          fetch-depth: 0
+          path: builder
 
-      # 完整编译依赖补充：增加golang+证书修复xray编译
-      - name: Build System Setup(安装依赖环境)
+      - name: 设置脚本执行权限（修复git丢失可执行位）
         run: |
-          sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
-          # 补充xray-core编译必备依赖
-          sudo -E apt -yqq install dos2unix libfuse-dev golang-go ca-certificates
-          sudo -E update-ca-certificates
-          sudo -E apt -yqq autoremove --purge
-          sudo -E apt -yqq autoclean
-          sudo -E apt -yqq clean
-          sudo -E systemctl daemon-reload
+          cd builder
+          chmod +x pre_clone_action.sh
+          chmod +x apply_patches.sh
+          chmod +x modules/system.sh
+          ls -l *.sh modules/*.sh
 
-      - name: Checkout
-        uses: actions/checkout@v7.0.0
-
-      - name: Set Build Date and Timezone
+      - name: 【阶段1】源码克隆前预处理 pre_clone_action
         run: |
-          sudo -E timedatectl set-timezone "Asia/Shanghai"
-          export BUILD_DATE=$(TZ=UTC-8 date +"%y.%m.%d_%H.%M.%S")
-          echo "BUILD_DATE=$BUILD_DATE" >> $GITHUB_ENV
-          export BUILD_SRC=$(awk -F"=" '/REPO_URL/ {print $NF}' "./wrt_core/compilecfg/${{ inputs.model }}.ini")
-          echo "BUILD_SRC=$BUILD_SRC" >> $GITHUB_ENV
+          cd builder
+          ./pre_clone_action.sh
+        shell: bash
 
-      - name: Pre Clone
+      - name: 导出环境变量至后续步骤
         run: |
-          for script in $(find . -name "*.sh"); do
-            chmod +x "$script"
-          done
-          ./wrt_core/pre_clone_action.sh ${{ inputs.model }}
+          cd builder
+          echo "BASE_PATH=$(pwd)" >> $GITHUB_ENV
+          echo "BUILD_DIR=$(pwd)/${{ env.BUILD_FOLDER }}" >> $GITHUB_ENV
+          echo "MODEL=${{ github.event.inputs.model }}" >> $GITHUB_ENV
+        shell: bash
 
-      #====================【新增修复：关闭冲突kmod-iptables，解决6.18内核ip_tables.ko文件冲突 START】====================
-      - name: Fix kernel module conflict kmod-iptables vs kmod-nf-ipt
+      - name: 安装编译依赖包
         run: |
-          cd ./action_build
-          sed -i '/^CONFIG_PACKAGE_kmod-iptables=/d' .config
-          echo "# CONFIG_PACKAGE_kmod-iptables is not set" >> .config
-          sed -i 's|# CONFIG_PACKAGE_kmod-nf-ipt is not set|CONFIG_PACKAGE_kmod-nf-ipt=y|g' .config
-          sed -i 's|# CONFIG_PACKAGE_kmod-nft-compat is not set|CONFIG_PACKAGE_kmod-nft-compat=y|g' .config
-          make defconfig
-          cd -
-      #====================【新增修复 END】====================
+          sudo apt update
+          sudo apt install -y build-essential flex bison git libssl-dev gawk gettext unzip file libncurses-dev zlib1g-dev libelf-dev python3 python3-pip curl wget ca-certificates rsync time
+        shell: bash
 
-      #====================【新增修复步骤 START】====================
-      - name: Fix luci-app-mosdns dependency(修复mosdns geo2txt依赖)
+      - name: 缓存ccache（加速编译）
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.BUILD_DIR }}/.ccache
+          key: ${{ github.workflow }}-${{ github.job }}-ccache-${{ github.sha }}-${{ env.MODEL }}
+          restore-keys: |
+            ${{ github.workflow }}-${{ github.job }}-ccache-${{ env.MODEL }}-
+
+      - name: 【阶段2】Clone上游源码
         run: |
-          cd ./action_build
-          # 删除原有旧mosdns、v2ray-geodata，避免冲突
-          rm -rf package/luci-app-mosdns
-          rm -rf feeds/packages/net/v2ray-geodata
-          rm -rf package/mosdns
-          # 拉取sbwml v5完整版mosdns套件（自带geo2txt,v2dat）
-          git clone https://github.com/sbwml/luci-app-mosdns -b v5 package/mosdns
-          #拉取geodata规则库
-          git clone https://github.com/sbwml/v2ray-geodata package/v2ray-geodata
-          #更新feeds，让编译系统识别新增依赖包
+          set -o errexit
+          cd ${{ env.BASE_PATH }}
+          # 可修改此处仓库与分支
+          git clone --depth 1 --branch openwrt-24.10 https://github.com/immortalwrt/immortalwrt.git ${{ env.BUILD_FOLDER }}
+          cd ${{ env.BUILD_FOLDER }}
+          git log -1 --oneline
+        shell: bash
+
+      - name: 复制patches、customfeeds到源码目录
+        run: |
+          set -o errexit
+          cd ${{ env.BASE_PATH }}
+          [ -d patches ] && cp -r patches ${{ env.BUILD_FOLDER }}/
+          [ -d customfeeds ] && cp -r customfeeds ${{ env.BUILD_FOLDER }}/
+          ls -la ${{ env.BUILD_FOLDER }}/
+        shell: bash
+
+      - name: 添加自定义feeds链接到feeds.conf.default
+        run: |
+          set -o errexit
+          cd ${{ env.BUILD_DIR }}
+          echo "src-link customfeeds $(realpath ${{ env.BASE_PATH }}/customfeeds)" >> feeds.conf.default
+          cat feeds.conf.default
+        shell: bash
+
+      - name: 更新与安装feeds
+        run: |
+          set -o errexit
+          cd ${{ env.BUILD_DIR }}
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          cd -
-      #====================【新增修复步骤 END】====================
+        shell: bash
 
-      # 【关键修复】替换Xray源码地址为ghproxy加速，解决拉取失败Error255
-      - name: Replace Xray-core Git Source Mirror
+      - name: 【阶段3】执行全部system.sh补丁 apply_patches.sh
         run: |
-          # 批量替换所有xray-core包的GitHub地址
-          find ./ -path "*package/xray-core/Makefile" -type f -exec sed -i 's|https://github.com/XTLS/Xray-core.git|https://mirror.ghproxy.com/https://github.com/XTLS/Xray-core.git|g' {} \; || true
+          set -o errexit
+          cd ${{ env.BASE_PATH }}
+          ./apply_patches.sh
+        shell: bash
 
-      # 构建前清空旧编译缓存，stamp残留是install报错主要诱因
-      - name: Clean Old Build Cache Before Compile
+      - name: 加载对应机型配置文件，如 configs/${{ env.MODEL }}
         run: |
-          rm -rf ./action_build/build_dir ./action_build/dl ./action_build/tmp ./action_build/staging_dir || true
-
-      # 移除staging_dir缓存，避免旧包污染导致install 255，仅保留ccache
-      - name: Cache Dependencies
-        uses: actions/cache@v6.1.0
-        with:
-          path: |
-            ./action_build/.ccache
-          key: ${{ matrix.os }}-${{ hashFiles('**/repo_flag') }}-${{ env.BUILD_DATE }}
-          restore-keys: |
-            ${{ matrix.os }}-${{ hashFiles('**/repo_flag') }}-
-
-      - name: Check Scripts(将所有sh文件赋予执行权限)
-        run: |
-          find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\)$" -exec dos2unix {} \; -exec chmod +x {} \;
-
-      - name: Check Caches
-        id: check-cache
-        if: env.WRT_TEST != 'true'
-        uses: actions/cache@main
-        with:
-          key: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}-${{env.WRT_HASH}}
-          restore-keys: ${{env.WRT_CONFIG}}-${{env.WRT_INFO}}
-          path: |
-            ./wrt/.ccache
-            ./wrt/staging_dir/host*
-            ./wrt/staging_dir/tool*
-
-      - name: Refresh the cache
-        run: |
-          if [ -d "./action_build/staging_dir" ]; then
-            find "./action_build/staging_dir" -type d -name "stamp" -not -path "*target*" | while read -r dir; do
-                find "$dir" -type f -exec touch {} +
-            done
+          cd ${{ env.BASE_PATH }}
+          if [ -f "configs/${{ env.MODEL }}" ];then
+            echo "✅ 使用机型配置: ${{ env.MODEL }}"
+            cp configs/${{ env.MODEL }} ${{ env.BUILD_DIR }}/.config
+          else
+            echo "⚠️ 未找到configs/${{ env.MODEL }}，将使用默认defconfig"
           fi
+        shell: bash
 
-      - name: Machine Information (Pre-build)
+      - name: make defconfig 生成配置
         run: |
-          echo "=============== Pre-build Snapshot ==============="
-          echo "Time: $(date '+%F %T %Z')"
-          echo "Runner: ${RUNNER_NAME} (${RUNNER_OS}/${RUNNER_ARCH})"
-          echo "Kernel: $(uname -r)"
-          echo "=================================================="
-          echo "[CPU]"
-          lscpu | grep -E "Model name|Architecture|CPU\(s\)|Thread\(s\) per core|Core\(s\) per socket|CPU max MHz"
-          echo "=================================================="
-          echo "[Memory]"
-          free -h
-          echo "=================================================="
-          echo "[Disk]"
-          df -hT
-          echo "--------------------------------------------------"
-          df -hi
-          echo "=================================================="
-          echo "[Workspace]"
-          echo "GITHUB_WORKSPACE=${GITHUB_WORKSPACE}"
-          du -sh "${GITHUB_WORKSPACE}" 2>/dev/null || true
-          du -sh ./action_build/.ccache 2>/dev/null || true
-          du -sh ./action_build/staging_dir 2>/dev/null || true
-          du -sh ./firmware 2>/dev/null || true
-          echo "=================================================="
+          set -o errexit
+          cd ${{ env.BUILD_DIR }}
+          make defconfig
+        shell: bash
 
-      # 【关键修复】编译脚本传入V=sc输出完整日志，定位xray真实报错
-      - name: Build Firmware(编译固件)
-        run: export BUILD_VERBOSE="V=sc" && ./build.sh ${{ inputs.model }}
-
-      - name: Get Kernel Verion
+      - name: 打印关键配置预览
         run: |
-          echo "KVER=$(grep -oP "^kernel.*" ./firmware/*.manifest | grep -oP "[4-6]\.[0-9]{1,3}\.[0-9]{1,3}")" >> $GITHUB_ENV
+          cd ${{ env.BUILD_DIR }}
+          grep -E "^CONFIG_TARGET|^CONFIG_PACKAGE_luci|^CONFIG_PACKAGE_kernel" .config | head -150
+        shell: bash
 
-      - name: Delete Old Cache
+      - name: 下载源码包 make download
         run: |
-          gh cache list --key ${{ matrix.os }}-${{ hashFiles('**/repo_flag') }}- --json key --jq '.[] | .key' | while read -r key; do
-            gh cache delete "$key"
-          done
-          echo "========cache status========"
-          echo "ccache: $(du -sh ./action_build/.ccache | cut -f 1)"
+          set -o errexit
+          cd ${{ env.BUILD_DIR }}
+          make download -j$(nproc)
+        shell: bash
 
-      - name: Machine Information (Post-build)(机器信息)
+      - name: 编译固件 make
         run: |
-          echo "=============== Post-build Snapshot ==============="
-          echo "Time: $(date '+%F %T %Z')"
-          echo "Runner: ${RUNNER_NAME} (${RUNNER_OS}/${RUNNER_ARCH})"
-          echo "Kernel: $(uname -r)"
-          echo "Uptime: $(uptime -p)"
-          echo "===================================================="
-          echo "[CPU]"
-          lscpu | grep -E "Model name|Architecture|CPU\(s\)|Thread\(s\) per core|Core\(s\) per socket|CPU max MHz"
-          echo "===================================================="
-          echo "[Memory]"
-          free -h
-          echo "===================================================="
-          echo "[Disk]"
-          df -hT
-          echo "----------------------------------------------------"
-          df -hi
-          echo "===================================================="
-          echo "[Build Outputs]"
-          du -sh ./action_build/.ccache 2>/dev/null || true
-          du -sh ./firmware 2>/dev/null || true
-          echo "Firmware file count: $(ls -1 ./firmware 2>/dev/null | wc -l)"
-          echo "===================================================="
+          cd ${{ env.BUILD_DIR }}
+          make -j$(nproc) V=s
+        shell: bash
 
-      - name: Package OpenWrt Firmware(打包固件)
-        if: ${{ inputs.model == 'n1_immwrt' }}
-        uses: unifreq/openwrt_packit@8007d3efd49bb42aa20c5755a50af21dc7a438e1
-        env:
-          OPENWRT_ARMVIRT: firmware/*.tar.gz
-          PACKAGE_SOC: s905d
-          KERNEL_VERSION_NAME: 6.6.y
-          WHOAMI: YooY
-
-      - name: Prepare Release Body
-        run: |
-          echo "云编译发布" > release_body.txt
-          echo "源码：${{ env.BUILD_SRC }}" >> release_body.txt
-          echo "Kernel: ${{ env.KVER }}" >> release_body.txt
-          echo "WIFI密码: 12345678" >> release_body.txt
-          echo "LAN地址: 192.168.1.1" >> release_body.txt
-          echo "插件：" >> release_body.txt
-          echo "$(grep -oP "luci-app(-[a-zA-Z0-9]{1,}){1,}" ./firmware/*.manifest | awk -F":" '{print $NF}')"  >> release_body.txt
-
-      - name: Release Firmware(发布固件)
-        uses: softprops/action-gh-release@v3.0.1
+      - name: 上传固件制品
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ env.BUILD_DATE }}_${{ inputs.model }}
-          files: ${{ inputs.model == 'n1_immwrt' && env.PACKAGED_OUTPUTPATH || './firmware' }}/*.*
-          body_path: ./release_body.txt
-
-      - name: Post-clean Disk Space
-        if: always()
-        run: |
-          rm -rf ./action_build/build_dir 2>/dev/null || true
-          rm -rf ./action_build/dl 2>/dev/null || true
-          sudo apt-get clean -y 2>/dev/null || true
-          echo "===== Disk Status After Post-clean ====="
-          df -hT
+          name: firmware-${{ env.MODEL }}-${{ github.sha }}
+          path: |
+            ${{ env.BUILD_DIR }}/bin/targets/*/*/*.bin
+            ${{ env.BUILD_DIR }}/bin/targets/*/*/*.img
+            ${{ env.BUILD_DIR }}/bin/targets/*/*/*.manifest
+          retention-days: 14
