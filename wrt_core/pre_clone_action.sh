@@ -14,7 +14,7 @@ export BUILD_DIR="${BASE_PATH}/openwrt"
 
 # 业务变量，根据你的yml配置修改
 export THEME_SET="argon"
-export LAN_ADDR="192.168.2.1"
+export LAN_ADDR="192.168.1.1"
 
 # 模拟原仓库两个自定义feed路径函数，后面system.sh需要调用
 get_custom_feed_worktree_dir(){
