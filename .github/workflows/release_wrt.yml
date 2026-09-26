@@ -44,7 +44,6 @@ permissions:
 #CI任务
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
 jobs:
   build:
     strategy:
@@ -112,7 +111,19 @@ jobs:
           done
           ./wrt_core/pre_clone_action.sh ${{ inputs.model }}
 
-      #====================【修复1：mosdns v5 + geo2txt 依赖】====================
+      #====================【新增修复：关闭冲突kmod-iptables，解决6.18内核ip_tables.ko文件冲突 START】====================
+      - name: Fix kernel module conflict kmod-iptables vs kmod-nf-ipt
+        run: |
+          cd ./action_build
+          sed -i '/^CONFIG_PACKAGE_kmod-iptables=/d' .config
+          echo "# CONFIG_PACKAGE_kmod-iptables is not set" >> .config
+          sed -i 's|# CONFIG_PACKAGE_kmod-nf-ipt is not set|CONFIG_PACKAGE_kmod-nf-ipt=y|g' .config
+          sed -i 's|# CONFIG_PACKAGE_kmod-nft-compat is not set|CONFIG_PACKAGE_kmod-nft-compat=y|g' .config
+          make defconfig
+          cd -
+      #====================【新增修复 END】====================
+
+      #====================【新增修复步骤 START】====================
       - name: Fix luci-app-mosdns dependency(修复mosdns geo2txt依赖)
         run: |
           cd ./action_build
@@ -128,19 +139,7 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           cd -
-
-      #====================【修复2：NSS冲突，解决 package/install Error255】====================
-      - name: Fix QCA‑NSS‑ECM conflict with kmod‑nft‑offload
-        run: |
-          cd ./action_build
-          # 加载defconfig后移除冲突模块，只针对开启NSS的IPQ平台；其他设备无匹配项直接跳过
-          if [ -f ".config" ]; then
-            sed -i '/CONFIG_PACKAGE_kmod-nft-offload=y/d' .config
-            sed -i '/CONFIG_NFT_OFFLOAD=y/d' .config
-            # 重生成defconfig，清理无效配置项
-            make defconfig
-          fi
-          cd -
+      #====================【新增修复步骤 END】====================
 
       # 【关键修复】替换Xray源码地址为ghproxy加速，解决拉取失败Error255
       - name: Replace Xray-core Git Source Mirror
