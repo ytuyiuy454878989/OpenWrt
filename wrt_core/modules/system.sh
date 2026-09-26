@@ -1,14 +1,21 @@
 #!/usr/bin/env bash
+set -o errexit
+set -o nounset
+set -o pipefail
+
+#============================================================
+# 注意：本脚本只定义函数，**不会自动执行**
+# 使用方式：source ${BASE_PATH}/modules/system.sh
+# 在 feeds update -a && feeds install -a 完成之后、make defconfig 之前调用各个函数
+#============================================================
 
 fix_default_set() {
     if [ -d "$BUILD_DIR/feeds/luci/collections/" ]; then
         find "$BUILD_DIR/feeds/luci/collections/" -type f -name "Makefile" -exec sed -i "s/luci-theme-bootstrap/luci-theme-$THEME_SET/g" {} \;
     fi
-
     install -Dm544 "$BASE_PATH/patches/990_set_argon_primary" "$BUILD_DIR/package/base-files/files/etc/uci-defaults/990_set_argon_primary"
     install -Dm544 "$BASE_PATH/patches/991_custom_settings" "$BUILD_DIR/package/base-files/files/etc/uci-defaults/991_custom_settings"
     install -Dm544 "$BASE_PATH/patches/992_set-wifi-uci.sh" "$BUILD_DIR/package/base-files/files/etc/uci-defaults/992_set-wifi-uci.sh"
-
     if [ -f "$BUILD_DIR/package/emortal/autocore/files/tempinfo" ]; then
         if [ -f "$BASE_PATH/patches/tempinfo" ]; then
             \cp -f "$BASE_PATH/patches/tempinfo" "$BUILD_DIR/package/emortal/autocore/files/tempinfo"
@@ -19,23 +26,23 @@ fix_default_set() {
 fix_miniupnpd() {
     local miniupnpd_dir="$BUILD_DIR/feeds/packages/net/miniupnpd"
     local patch_file="999-chanage-default-leaseduration.patch"
-
     if [ -d "$miniupnpd_dir" ] && [ -f "$BASE_PATH/patches/$patch_file" ]; then
         install -Dm644 "$BASE_PATH/patches/$patch_file" "$miniupnpd_dir/patches/$patch_file"
     fi
 }
 
 change_dnsmasq2full() {
-    if ! grep -q "dnsmasq-full" $BUILD_DIR/include/target.mk; then
-        sed -i 's/dnsmasq/dnsmasq-full/g' ./include/target.mk
+    local target_mk="$BUILD_DIR/include/target.mk"
+    if [ -f "$target_mk" ] && ! grep -q "dnsmasq-full" "$target_mk"; then
+        sed -i 's/dnsmasq/dnsmasq-full/g' "$target_mk"
     fi
 }
 
 fix_mk_def_depends() {
-    sed -i 's/libustream-mbedtls/libustream-openssl/g' $BUILD_DIR/include/target.mk 2>/dev/null
-    if [ -f $BUILD_DIR/target/linux/qualcommax/Makefile ]; then
-        sed -i 's/wpad-openssl/wpad-mesh-openssl/g' $BUILD_DIR/target/linux/qualcommax/Makefile
-    fi
+    local target_mk="$BUILD_DIR/include/target.mk"
+    [ -f "$target_mk" ] && sed -i 's/libustream-mbedtls/libustream-openssl/g' "$target_mk" 2>/dev/null
+    local qualcommax_mk="$BUILD_DIR/target/linux/qualcommax/Makefile"
+    [ -f "$qualcommax_mk" ] && sed -i 's/wpad-openssl/wpad-mesh-openssl/g' "$qualcommax_mk"
 }
 
 fix_kconfig_recursive_dependency() {
@@ -48,21 +55,19 @@ fix_kconfig_recursive_dependency() {
 
 update_default_lan_addr() {
     local CFG_PATH="$BUILD_DIR/package/base-files/files/bin/config_generate"
-    if [ -f $CFG_PATH ]; then
-        sed -i 's/192\.168\.[0-9]*\.[0-9]*/'$LAN_ADDR'/g' $CFG_PATH
+    if [ -f "$CFG_PATH" ]; then
+        sed -i 's/192\.168\.[0-9]*\.[0-9]*/'$LAN_ADDR'/g' "$CFG_PATH"
     fi
 }
 
 remove_something_nss_kmod() {
     local ipq_mk_path="$BUILD_DIR/target/linux/qualcommax/Makefile"
     local target_mks=("$BUILD_DIR/target/linux/qualcommax/ipq60xx/target.mk" "$BUILD_DIR/target/linux/qualcommax/ipq807x/target.mk")
-
     for target_mk in "${target_mks[@]}"; do
         if [ -f "$target_mk" ]; then
             sed -i 's/kmod-qca-nss-crypto//g' "$target_mk"
         fi
     done
-
     if [ -f "$ipq_mk_path" ]; then
         sed -i '/kmod-qca-nss-drv-eogremgr/d' "$ipq_mk_path"
         sed -i '/kmod-qca-nss-drv-gre/d' "$ipq_mk_path"
@@ -74,7 +79,6 @@ remove_something_nss_kmod() {
         sed -i '/kmod-qca-nss-drv-vxlanmgr/d' "$ipq_mk_path"
         sed -i '/kmod-qca-nss-drv-wifi-meshmgr/d' "$ipq_mk_path"
         sed -i '/kmod-qca-nss-macsec/d' "$ipq_mk_path"
-
         sed -i 's/automount //g' "$ipq_mk_path"
         sed -i 's/cpufreq //g' "$ipq_mk_path"
     fi
@@ -82,7 +86,6 @@ remove_something_nss_kmod() {
 
 update_affinity_script() {
     local affinity_script_dir="$BUILD_DIR/target/linux/qualcommax"
-
     if [ -d "$affinity_script_dir" ]; then
         find "$affinity_script_dir" -name "set-irq-affinity" -exec rm -f {} \;
         find "$affinity_script_dir" -name "smp_affinity" -exec rm -f {} \;
@@ -95,7 +98,6 @@ fix_hash_value() {
     local old_hash="$2"
     local new_hash="$3"
     local package_name="$4"
-
     if [ -f "$makefile_path" ]; then
         sed -i "s/$old_hash/$new_hash/g" "$makefile_path"
         echo "已修正 $package_name 的哈希值。"
@@ -108,7 +110,6 @@ apply_hash_fixes() {
         "860a816bf1e69d5a8a2049483197dbebe8a3da2c9b05b2da68c85ef7dee7bdde" \
         "582021891808442b01f551bc41d7d95c38fb00c1ec78a58ac3aaaf898fbd2b5b" \
         "smartdns"
-
     fix_hash_value \
         "$BUILD_DIR/package/feeds/packages/smartdns/Makefile" \
         "320c99a65ca67a98d11a45292aa99b8904b5ebae5b0e17b302932076bf62b1ec" \
@@ -122,55 +123,50 @@ update_ath11k_fw() {
     local url="https://raw.githubusercontent.com/VIKINGYFY/immortalwrt/refs/heads/main/package/firmware/ath11k-firmware/Makefile"
     local ipq60_target="$BUILD_DIR/target/linux/qualcommax/ipq60xx/target.mk"
     local ipq807_target="$BUILD_DIR/target/linux/qualcommax/ipq807x/target.mk"
-
-    if [ -d "$(dirname "$makefile")" ]; then
-        echo "正在更新 ath11k-firmware Makefile..."
-        if ! curl -fsSL -o "$new_mk" "$url"; then
-            echo "错误：从 $url 下载 ath11k-firmware Makefile 失败" >&2
-            exit 1
-        fi
-        if [ ! -s "$new_mk" ]; then
-            echo "错误：下载的 ath11k-firmware Makefile 为空文件" >&2
-            exit 1
-        fi
-        mv -f "$new_mk" "$makefile"
-
-        if [ -f "$ipq60_target" ]; then
-            sed -i 's/ath11k-firmware-ipq6018\([^-[:alnum:]_]\|$\)/ath11k-firmware-ipq6018-ddwrt\1/g' "$ipq60_target"
-        fi
-
-        if [ -f "$ipq807_target" ]; then
-            sed -i 's/ath11k-firmware-ipq8074\([^-[:alnum:]_]\|$\)/ath11k-firmware-ipq8074-ddwrt\1/g' "$ipq807_target"
-        fi
-
-        if [ -f "$ipq60_target" ] || [ -f "$ipq807_target" ]; then
-            echo "已同步 ipq60xx/ipq807x ath11k 固件依赖为 ddwrt 包名。"
-        fi
+    if [ ! -d "$(dirname "$makefile")" ]; then
+        return 0
+    fi
+    echo "正在更新 ath11k-firmware Makefile..."
+    if ! curl -fsSL -o "$new_mk" "$url"; then
+        echo "警告：从 $url 下载 ath11k-firmware Makefile 失败，跳过该补丁" >&2
+        rm -f "$new_mk"
+        return 1
+    fi
+    if [ ! -s "$new_mk" ]; then
+        echo "警告：下载的 ath11k-firmware Makefile 为空文件，跳过该补丁" >&2
+        rm -f "$new_mk"
+        return 1
+    fi
+    mv -f "$new_mk" "$makefile"
+    if [ -f "$ipq60_target" ]; then
+        sed -i 's/ath11k-firmware-ipq6018\([^-[:alnum:]_]\|$\)/ath11k-firmware-ipq6018-ddwrt\1/g' "$ipq60_target"
+    fi
+    if [ -f "$ipq807_target" ]; then
+        sed -i 's/ath11k-firmware-ipq8074\([^-[:alnum:]_]\|$\)/ath11k-firmware-ipq8074-ddwrt\1/g' "$ipq807_target"
+    fi
+    if [ -f "$ipq60_target" ] || [ -f "$ipq807_target" ]; then
+        echo "已同步 ipq60xx/ipq807x ath11k 固件依赖为 ddwrt 包名。"
     fi
 }
 
 fix_mkpkg_format_invalid() {
     local custom_feed_worktree_dir
     custom_feed_worktree_dir=$(get_custom_feed_worktree_dir)
-
     if [[ $BUILD_DIR =~ "imm-nss" ]]; then
-        if [ -f "$custom_feed_worktree_dir/v2ray-geodata/Makefile" ]; then
+        [ -f "$custom_feed_worktree_dir/v2ray-geodata/Makefile" ] && \
             sed -i 's/VER)-\$(PKG_RELEASE)/VER)-r\$(PKG_RELEASE)/g' "$custom_feed_worktree_dir/v2ray-geodata/Makefile"
-        fi
-        if [ -f "$custom_feed_worktree_dir/luci-lib-taskd/Makefile" ]; then
+        [ -f "$custom_feed_worktree_dir/luci-lib-taskd/Makefile" ] && \
             sed -i 's/>=1\.0\.3-1/>=1\.0\.3-r1/g' "$custom_feed_worktree_dir/luci-lib-taskd/Makefile"
-        fi
-        if [ -f "$custom_feed_worktree_dir/luci-app-openclash/Makefile" ]; then
+        [ -f "$custom_feed_worktree_dir/luci-app-openclash/Makefile" ] && \
             sed -i 's/PKG_RELEASE:=beta/PKG_RELEASE:=1/g' "$custom_feed_worktree_dir/luci-app-openclash/Makefile"
-        fi
-        if [ -f "$custom_feed_worktree_dir/luci-app-quickstart/Makefile" ]; then
+        [ -f "$custom_feed_worktree_dir/luci-app-quickstart/Makefile" ] && {
             sed -i 's/PKG_VERSION:=0\.8\.16-1/PKG_VERSION:=0\.8\.16/g' "$custom_feed_worktree_dir/luci-app-quickstart/Makefile"
             sed -i 's/PKG_RELEASE:=$/PKG_RELEASE:=1/g' "$custom_feed_worktree_dir/luci-app-quickstart/Makefile"
-        fi
-        if [ -f "$custom_feed_worktree_dir/luci-app-store/Makefile" ]; then
+        }
+        [ -f "$custom_feed_worktree_dir/luci-app-store/Makefile" ] && {
             sed -i 's/PKG_VERSION:=0\.1\.27-1/PKG_VERSION:=0\.1\.27/g' "$custom_feed_worktree_dir/luci-app-store/Makefile"
             sed -i 's/PKG_RELEASE:=$/PKG_RELEASE:=1/g' "$custom_feed_worktree_dir/luci-app-store/Makefile"
-        fi
+        }
     fi
 }
 
@@ -178,35 +174,26 @@ change_cpuusage() {
     local luci_rpc_path="$BUILD_DIR/feeds/luci/modules/luci-base/root/usr/share/rpcd/ucode/luci"
     local qualcommax_sbin_dir="$BUILD_DIR/target/linux/qualcommax/base-files/sbin"
     local filogic_sbin_dir="$BUILD_DIR/target/linux/mediatek/filogic/base-files/sbin"
-
     if [ -f "$luci_rpc_path" ]; then
         sed -i "s#const fd = popen('top -n1 | awk \\\'/^CPU/ {printf(\"%d%\", 100 - \$8)}\\\'')#const cpuUsageCommand = access('/sbin/cpuusage') ? '/sbin/cpuusage' : 'top -n1 | awk \\\'/^CPU/ {printf(\"%d%\", 100 - \$8)}\\\''#g" "$luci_rpc_path"
         sed -i '/cpuUsageCommand/a \\t\t\tconst fd = popen(cpuUsageCommand);' "$luci_rpc_path"
     fi
-
     local old_script_path="$BUILD_DIR/package/base-files/files/sbin/cpuusage"
-    if [ -f "$old_script_path" ]; then
-        rm -f "$old_script_path"
-    fi
-
-    if [ -d "$BUILD_DIR/target/linux/qualcommax" ]; then
-        install -Dm755 "$BASE_PATH/patches/cpuusage" "$qualcommax_sbin_dir/cpuusage"
-    fi
-    if [ -d "$BUILD_DIR/target/linux/mediatek" ]; then
-        install -Dm755 "$BASE_PATH/patches/hnatusage" "$filogic_sbin_dir/cpuusage"
-    fi
+    [ -f "$old_script_path" ] && rm -f "$old_script_path"
+    [ -d "$BUILD_DIR/target/linux/qualcommax" ] && install -Dm755 "$BASE_PATH/patches/cpuusage" "$qualcommax_sbin_dir/cpuusage"
+    [ -d "$BUILD_DIR/target/linux/mediatek" ] && install -Dm755 "$BASE_PATH/patches/hnatusage" "$filogic_sbin_dir/cpuusage"
 }
 
 update_tcping() {
     local tcping_path="$(get_custom_feed_worktree_dir)/tcping/Makefile"
     local url="https://raw.githubusercontent.com/Openwrt-Passwall/openwrt-passwall-packages/refs/heads/main/tcping/Makefile"
-
-    if [ -d "$(dirname "$tcping_path")" ]; then
-        echo "正在更新 tcping Makefile..."
-        if ! curl -fsSL -o "$tcping_path" "$url"; then
-            echo "错误：从 $url 下载 tcping Makefile 失败" >&2
-            exit 1
-        fi
+    if [ ! -d "$(dirname "$tcping_path")" ]; then
+        return 0
+    fi
+    echo "正在更新 tcping Makefile..."
+    if ! curl -fsSL -o "$tcping_path" "$url"; then
+        echo "警告：下载 tcping Makefile失败，跳过" >&2
+        return 1
     fi
 }
 
@@ -215,22 +202,17 @@ set_custom_task() {
     cat <<'EOF' >"$sh_dir/custom_task"
 #!/bin/sh /etc/rc.common
 START=99
-
 boot() {
     sed -i '/drop_caches/d' /etc/crontabs/root
     echo "15 3 * * * sync && echo 3 > /proc/sys/vm/drop_caches" >>/etc/crontabs/root
-
     sed -i '/wireguard_watchdog/d' /etc/crontabs/root
-
     local wg_ifname=$(wg show | awk '/interface/ {print $2}')
-
     if [ -n "$wg_ifname" ]; then
         echo "*/15 * * * * /usr/bin/wireguard_watchdog" >>/etc/crontabs/root
         uci set system.@system[0].cronloglevel='9'
         uci commit system
         /etc/init.d/cron restart
     fi
-
     crontab /etc/crontabs/root
 }
 EOF
@@ -239,10 +221,7 @@ EOF
 
 apply_passwall_tweaks() {
     local chnlist_path="$(get_custom_feed_worktree_dir)/luci-app-passwall/root/usr/share/passwall/rules/chnlist"
-    if [ -f "$chnlist_path" ]; then
-        >"$chnlist_path"
-    fi
-
+    [ -f "$chnlist_path" ] && >"$chnlist_path"
     local xray_util_path="$(get_custom_feed_worktree_dir)/luci-app-passwall/luasrc/passwall/util_xray.lua"
     if [ -f "$xray_util_path" ]; then
         sed -i 's/maxRTT = "1s"/maxRTT = "2s"/g' "$xray_util_path"
@@ -253,7 +232,6 @@ apply_passwall_tweaks() {
 install_opkg_distfeeds() {
     local emortal_def_dir="$BUILD_DIR/package/emortal/default-settings"
     local distfeeds_conf="$emortal_def_dir/files/99-distfeeds.conf"
-
     if [ -d "$emortal_def_dir" ] && [ ! -f "$distfeeds_conf" ]; then
         cat <<'EOF' >"$distfeeds_conf"
 src/gz openwrt_base https://downloads.immortalwrt.org/releases/24.10-SNAPSHOT/packages/aarch64_cortex-a53/base/
@@ -262,11 +240,9 @@ src/gz openwrt_packages https://downloads.immortalwrt.org/releases/24.10-SNAPSHO
 src/gz openwrt_routing https://downloads.immortalwrt.org/releases/24.10-SNAPSHOT/packages/aarch64_cortex-a53/routing/
 src/gz openwrt_telephony https://downloads.immortalwrt.org/releases/24.10-SNAPSHOT/packages/aarch64_cortex-a53/telephony/
 EOF
-
         sed -i "/define Package\/default-settings\/install/a\\
 \\t\$(INSTALL_DIR) \$(1)/etc\\n\
 \t\$(INSTALL_DATA) ./files/99-distfeeds.conf \$(1)/etc/99-distfeeds.conf\n" $emortal_def_dir/Makefile
-
         sed -i "/exit 0/i\\
 [ -f \'/etc/99-distfeeds.conf\' ] && mv \'/etc/99-distfeeds.conf\' \'/etc/opkg/distfeeds.conf\'\n\
 sed -ri \'/check_signature/s@^[^#]@#&@\' /etc/opkg.conf\n" $emortal_def_dir/files/99-default-settings
@@ -275,7 +251,7 @@ sed -ri \'/check_signature/s@^[^#]@#&@\' /etc/opkg.conf\n" $emortal_def_dir/file
 
 update_nss_pbuf_performance() {
     local pbuf_path="$BUILD_DIR/package/kernel/mac80211/files/pbuf.uci"
-    if [ -d "$(dirname "$pbuf_path")" ] && [ -f $pbuf_path ]; then
+    if [ -f "$pbuf_path" ]; then
         sed -i "s/auto_scale '1'/auto_scale 'off'/g" $pbuf_path
         sed -i "s/scaling_governor 'performance'/scaling_governor 'schedutil'/g" $pbuf_path
     fi
@@ -283,14 +259,14 @@ update_nss_pbuf_performance() {
 
 set_build_signature() {
     local file="$BUILD_DIR/feeds/luci/modules/luci-mod-status/htdocs/luci-static/resources/view/status/include/10_system.js"
-    if [ -d "$(dirname "$file")" ] && [ -f $file ]; then
+    if [ -f "$file" ]; then
         sed -i "s/(\(luciversion || ''\))/(\1) + (' \/ build by ZqinKing')/g" "$file"
     fi
 }
 
 update_nss_diag() {
     local file="$BUILD_DIR/package/kernel/mac80211/files/nss_diag.sh"
-    if [ -d "$(dirname "$file")" ] && [ -f "$file" ]; then
+    if [ -f "$file" ]; then
         \rm -f "$file"
         install -Dm755 "$BASE_PATH/patches/nss_diag.sh" "$file"
     fi
@@ -298,62 +274,42 @@ update_nss_diag() {
 
 update_menu_location() {
     local samba4_path="$BUILD_DIR/feeds/luci/applications/luci-app-samba4/root/usr/share/luci/menu.d/luci-app-samba4.json"
-    if [ -d "$(dirname "$samba4_path")" ] && [ -f "$samba4_path" ]; then
-        sed -i 's/nas/services/g' "$samba4_path"
-    fi
-
+    [ -f "$samba4_path" ] && sed -i 's/nas/services/g' "$samba4_path"
     local tailscale_path="$(get_custom_feed_worktree_dir)/luci-app-tailscale/root/usr/share/luci/menu.d/luci-app-tailscale.json"
-    if [ -d "$(dirname "$tailscale_path")" ] && [ -f "$tailscale_path" ]; then
-        sed -i 's/services/vpn/g' "$tailscale_path"
-    fi
+    [ -f "$tailscale_path" ] && sed -i 's/services/vpn/g' "$tailscale_path"
 }
 
 fix_compile_coremark() {
     local file="$BUILD_DIR/feeds/packages/utils/coremark/Makefile"
-    if [ -d "$(dirname "$file")" ] && [ -f "$file" ]; then
-        sed -i 's/mkdir \$/mkdir -p \$/g' "$file"
-    fi
+    [ -f "$file" ] && sed -i 's/mkdir \$/mkdir -p \$/g' "$file"
 }
 
 update_dnsmasq_conf() {
     local file="$BUILD_DIR/package/network/services/dnsmasq/files/dhcp.conf"
-    if [ -d "$(dirname "$file")" ] && [ -f "$file" ]; then
-        sed -i '/dns_redirect/d' "$file"
-    fi
+    [ -f "$file" ] && sed -i '/dns_redirect/d' "$file"
 }
 
 add_backup_info_to_sysupgrade() {
     local conf_path="$BUILD_DIR/package/base-files/files/etc/sysupgrade.conf"
-
     if [ -f "$conf_path" ]; then
-        cat >"$conf_path" <<'EOF'
-/etc/AdGuardHome.yaml
-/etc/easytier
-/etc/lucky/
-EOF
+        grep -q "^/etc/AdGuardHome.yaml" "$conf_path" || echo "/etc/AdGuardHome.yaml" >> "$conf_path"
+        grep -q "^/etc/easytier" "$conf_path" || echo "/etc/easytier" >> "$conf_path"
+        grep -q "^/etc/lucky/" "$conf_path" || echo "/etc/lucky/" >> "$conf_path"
     fi
 }
 
 update_script_priority() {
     local qca_drv_path="$BUILD_DIR/package/feeds/nss_packages/qca-nss-drv/files/qca-nss-drv.init"
-    if [ -d "${qca_drv_path%/*}" ] && [ -f "$qca_drv_path" ]; then
-        sed -i 's/START=.*/START=88/g' "$qca_drv_path"
-    fi
-
+    [ -f "$qca_drv_path" ] && sed -i 's/START=.*/START=88/g' "$qca_drv_path"
     local pbuf_path="$BUILD_DIR/package/kernel/mac80211/files/qca-nss-pbuf.init"
-    if [ -d "${pbuf_path%/*}" ] && [ -f "$pbuf_path" ]; then
-        sed -i 's/START=.*/START=89/g' "$pbuf_path"
-    fi
-
+    [ -f "$pbuf_path" ] && sed -i 's/START=.*/START=89/g' "$pbuf_path"
     local mosdns_path="$(get_custom_feed_package_dir)/luci-app-mosdns/root/etc/init.d/mosdns"
-    if [ -d "${mosdns_path%/*}" ] && [ -f "$mosdns_path" ]; then
-        sed -i 's/START=.*/START=94/g' "$mosdns_path"
-    fi
+    [ -f "$mosdns_path" ] && sed -i 's/START=.*/START=94/g' "$mosdns_path"
 }
 
 update_mosdns_deconfig() {
     local mosdns_conf="$(get_custom_feed_worktree_dir)/luci-app-mosdns/root/etc/config/mosdns"
-    if [ -d "${mosdns_conf%/*}" ] && [ -f "$mosdns_conf" ]; then
+    if [ -f "$mosdns_conf" ]; then
         sed -i 's/8000/300/g' "$mosdns_conf"
         sed -i 's/5335/5336/g' "$mosdns_conf"
     fi
@@ -362,12 +318,13 @@ update_mosdns_deconfig() {
 fix_quickstart() {
     local file_path="$(get_custom_feed_worktree_dir)/luci-app-quickstart/luasrc/controller/istore_backend.lua"
     local url="https://gist.githubusercontent.com/puteulanus/1c180fae6bccd25e57eb6d30b7aa28aa/raw/istore_backend.lua"
-    if [ -f "$file_path" ]; then
-        echo "正在修复 quickstart..."
-        if ! curl -fsSL -o "$file_path" "$url"; then
-            echo "错误：从 $url 下载 istore_backend.lua 失败" >&2
-            exit 1
-        fi
+    if [ ! -f "$file_path" ]; then
+        return 0
+    fi
+    echo "正在修复 quickstart..."
+    if ! curl -fsSL -o "$file_path" "$url"; then
+        echo "警告：下载 istore_backend.lua 失败，跳过quickstart修复" >&2
+        return 1
     fi
 }
 
@@ -375,18 +332,15 @@ update_oaf_deconfig() {
     local conf_path="$(get_custom_feed_worktree_dir)/open-app-filter/files/appfilter.config"
     local uci_def="$(get_custom_feed_worktree_dir)/luci-app-oaf/root/etc/uci-defaults/94_feature_3.0"
     local disable_path="$(get_custom_feed_worktree_dir)/luci-app-oaf/root/etc/uci-defaults/99_disable_oaf"
-
-    if [ -d "${conf_path%/*}" ] && [ -f "$conf_path" ]; then
+    if [ -f "$conf_path" ]; then
         sed -i \
             -e "s/record_enable '1'/record_enable '0'/g" \
             -e "s/disable_hnat '1'/disable_hnat '0'/g" \
             -e "s/auto_load_engine '1'/auto_load_engine '0'/g" \
             "$conf_path"
     fi
-
-    if [ -d "${uci_def%/*}" ] && [ -f "$uci_def" ]; then
+    if [ -f "$uci_def" ]; then
         sed -i '/\(disable_hnat\|auto_load_engine\)/d' "$uci_def"
-
         cat >"$disable_path" <<-EOF
 #!/bin/sh
 [ "\$(uci get appfilter.global.enable 2>/dev/null)" = "0" ] && {
@@ -400,48 +354,45 @@ EOF
 
 update_geoip() {
     local geodata_path="$(get_custom_feed_package_dir)/v2ray-geodata/Makefile"
-    if [ -d "${geodata_path%/*}" ] && [ -f "$geodata_path" ]; then
-        local GEOIP_VER=$(awk -F"=" '/GEOIP_VER:=/ {print $NF}' $geodata_path | grep -oE "[0-9]{1,}")
-        if [ -n "$GEOIP_VER" ]; then
-            local base_url="https://github.com/v2fly/geoip/releases/download/${GEOIP_VER}"
-            local old_SHA256
-            if ! old_SHA256=$(wget -qO- "$base_url/geoip.dat.sha256sum" | awk '{print $1}'); then
-                echo "错误：从 $base_url/geoip.dat.sha256sum 获取旧的 geoip.dat 校验和失败" >&2
-                return 1
-            fi
-            local new_SHA256
-            if ! new_SHA256=$(wget -qO- "$base_url/geoip-only-cn-private.dat.sha256sum" | awk '{print $1}'); then
-                echo "错误：从 $base_url/geoip-only-cn-private.dat.sha256sum 获取新的 geoip-only-cn-private.dat 校验和失败" >&2
-                return 1
-            fi
-            if [ -n "$old_SHA256" ] && [ -n "$new_SHA256" ]; then
-                if grep -q "$old_SHA256" "$geodata_path"; then
-                    sed -i "s|=geoip.dat|=geoip-only-cn-private.dat|g" "$geodata_path"
-                    sed -i "s/$old_SHA256/$new_SHA256/g" "$geodata_path"
-                fi
-            fi
+    if [ ! -f "$geodata_path" ]; then
+        return 0
+    fi
+    local GEOIP_VER=$(awk -F"=" '/GEOIP_VER:=/ {print $NF}' $geodata_path | grep -oE "[0-9]{1,}")
+    if [ -z "$GEOIP_VER" ]; then
+        return 0
+    fi
+    local base_url="https://github.com/v2fly/geoip/releases/download/${GEOIP_VER}"
+    local old_SHA256
+    if ! old_SHA256=$(wget -qO- "$base_url/geoip.dat.sha256sum" | awk '{print $1}'); then
+        echo "警告：获取geoip.dat.sha256sum失败，跳过geoip更新" >&2
+        return 1
+    fi
+    local new_SHA256
+    if ! new_SHA256=$(wget -qO- "$base_url/geoip-only-cn-private.dat.sha256sum" | awk '{print $1}'); then
+        echo "警告：获取geoip-only-cn-private.dat.sha256sum失败，跳过geoip更新" >&2
+        return 1
+    fi
+    if [ -n "$old_SHA256" ] && [ -n "$new_SHA256" ]; then
+        if grep -q "$old_SHA256" "$geodata_path"; then
+            sed -i "s|=geoip.dat|=geoip-only-cn-private.dat|g" "$geodata_path"
+            sed -i "s/$old_SHA256/$new_SHA256/g" "$geodata_path"
         fi
     fi
 }
 
 fix_rust_compile_error() {
-    if [ -f "$BUILD_DIR/feeds/packages/lang/rust/Makefile" ]; then
-        sed -i 's/download-ci-llvm=true/download-ci-llvm=false/g' "$BUILD_DIR/feeds/packages/lang/rust/Makefile"
-    fi
+    local rust_mk="$BUILD_DIR/feeds/packages/lang/rust/Makefile"
+    [ -f "$rust_mk" ] && sed -i 's/download-ci-llvm=true/download-ci-llvm=false/g' "$rust_mk"
 }
 
 fix_easytier_lua() {
     local file_path="$(get_custom_feed_package_dir)/luci-app-easytier/luasrc/model/cbi/easytier.lua"
-    if [ -f "$file_path" ]; then
-        sed -i 's/util.pcdata/xml.pcdata/g' "$file_path"
-    fi
+    [ -f "$file_path" ] && sed -i 's/util.pcdata/xml.pcdata/g' "$file_path"
 }
 
 fix_easytier_mk() {
     local mk_path="$(get_custom_feed_worktree_dir)/luci-app-easytier/easytier/Makefile"
-    if [ -f "$mk_path" ]; then
-        sed -i 's/!@(mips||mipsel)/!TARGET_mips \&\& !TARGET_mipsel/g' "$mk_path"
-    fi
+    [ -f "$mk_path" ] && sed -i 's/!@(mips||mipsel)/!TARGET_mips \&\& !TARGET_mipsel/g' "$mk_path"
 }
 
 update_nginx_ubus_module() {
@@ -449,14 +400,13 @@ update_nginx_ubus_module() {
     local source_date="2024-03-02"
     local source_version="564fa3e9c2b04ea298ea659b793480415da26415"
     local mirror_hash="92c9ab94d88a2fe8d7d1e8a15d15cfc4d529fdc357ed96d22b65d5da3dd24d7f"
-
     if [ -f "$makefile_path" ]; then
         sed -i "s/SOURCE_DATE:=2020-09-06/SOURCE_DATE:=$source_date/g" "$makefile_path"
         sed -i "s/SOURCE_VERSION:=b2d7260dcb428b2fb65540edb28d7538602b4a26/SOURCE_VERSION:=$source_version/g" "$makefile_path"
         sed -i "s/MIRROR_HASH:=515bb9d355ad80916f594046a45c190a68fb6554d6795a54ca15cab8bdd12fda/MIRROR_HASH:=$mirror_hash/g" "$makefile_path"
         echo "已更新 nginx-mod-ubus 模块的 SOURCE_DATE, SOURCE_VERSION 和 MIRROR_HASH。"
     else
-        echo "错误：未找到 $makefile_path 文件，无法更新 nginx-mod-ubus 模块。" >&2
+        echo "警告：未找到 $makefile_path 文件，无法更新 nginx-mod-ubus 模块。" >&2
     fi
 }
 
@@ -480,60 +430,50 @@ fix_opkg_check() {
 fix_netfilter_kmod_clash() {
     local include_netfilter_mk="$BUILD_DIR/include/netfilter.mk"
     local netfilter_mk="$BUILD_DIR/package/kernel/linux/modules/netfilter.mk"
-
     if [ ! -f "$include_netfilter_mk" ]; then
         echo "Netfilter include file not found: $include_netfilter_mk" >&2
         return 1
     fi
-
     if [ ! -f "$netfilter_mk" ]; then
         echo "Netfilter makefile not found: $netfilter_mk" >&2
         return 1
     fi
-
     if grep -q 'CONFIG_IP_NF_IPTABLES_LEGACY, $(P_V4)ip_tables, ge 6.12' "$include_netfilter_mk" && \
        grep -q 'CONFIG_IP6_NF_IPTABLES_LEGACY, $(P_V6)ip6_tables, ge 6.12' "$include_netfilter_mk" && \
        grep -q 'DEPENDS:=+(!(LINUX_6_12||LINUX_6_18)):kmod-iptables' "$netfilter_mk"; then
         echo "Netfilter kmod clash workaround already applied"
         return 0
     fi
-
     if grep -q '$(eval $(if $(NF_KMOD),$(call nf_add,NF_IPT,CONFIG_IP_NF_IPTABLES, $(P_V4)ip_tables),))' "$include_netfilter_mk"; then
         echo "Updating NF_IPT mapping for Linux 6.12/6.18..."
         sed -i 's@$(eval $(if $(NF_KMOD),$(call nf_add,NF_IPT,CONFIG_IP_NF_IPTABLES, $(P_V4)ip_tables),))@$(eval $(if $(NF_KMOD),$(call nf_add,NF_IPT,CONFIG_IP_NF_IPTABLES, $(P_V4)ip_tables, lt 6.12),))@' "$include_netfilter_mk"
         sed -i '/CONFIG_IP_NF_IPTABLES, $(P_V4)ip_tables, lt 6\.12)/a$(eval $(if $(NF_KMOD),$(call nf_add,NF_IPT,CONFIG_IP_NF_IPTABLES_LEGACY, $(P_V4)ip_tables, ge 6.12),))' "$include_netfilter_mk"
     fi
-
     if grep -q '$(eval $(if $(NF_KMOD),,$(call nf_add,IPT_CORE,CONFIG_IP_NF_IPTABLES, xt_standard ipt_icmp xt_tcp xt_udp xt_comment xt_set xt_SET)))' "$include_netfilter_mk"; then
         echo "Updating IPT_CORE userland mapping for Linux 6.12/6.18..."
         sed -i 's@$(eval $(if $(NF_KMOD),,$(call nf_add,IPT_CORE,CONFIG_IP_NF_IPTABLES, xt_standard ipt_icmp xt_tcp xt_udp xt_comment xt_set xt_SET)))@$(eval $(if $(NF_KMOD),,$(call nf_add,IPT_CORE,CONFIG_IP_NF_IPTABLES, xt_standard ipt_icmp xt_tcp xt_udp xt_comment xt_set xt_SET, lt 6.12)))@' "$include_netfilter_mk"
         sed -i '/CONFIG_IP_NF_IPTABLES, xt_standard ipt_icmp xt_tcp xt_udp xt_comment xt_set xt_SET, lt 6\.12))/a$(eval $(if $(NF_KMOD),,$(call nf_add,IPT_CORE,CONFIG_IP_NF_IPTABLES_LEGACY, xt_standard ipt_icmp xt_tcp xt_udp xt_comment xt_set xt_SET, ge 6.12)))' "$include_netfilter_mk"
     fi
-
     if grep -q '$(eval $(if $(NF_KMOD),$(call nf_add,NF_IPT6,CONFIG_IP6_NF_IPTABLES, $(P_V6)ip6_tables),))' "$include_netfilter_mk"; then
         echo "Updating NF_IPT6 mapping for Linux 6.12/6.18..."
         sed -i 's@$(eval $(if $(NF_KMOD),$(call nf_add,NF_IPT6,CONFIG_IP6_NF_IPTABLES, $(P_V6)ip6_tables),))@$(eval $(if $(NF_KMOD),$(call nf_add,NF_IPT6,CONFIG_IP6_NF_IPTABLES, $(P_V6)ip6_tables, lt 6.12),))@' "$include_netfilter_mk"
         sed -i '/CONFIG_IP6_NF_IPTABLES, $(P_V6)ip6_tables, lt 6\.12)/a$(eval $(if $(NF_KMOD),$(call nf_add,NF_IPT6,CONFIG_IP6_NF_IPTABLES_LEGACY, $(P_V6)ip6_tables, ge 6.12),))' "$include_netfilter_mk"
     fi
-
     if grep -q '$(eval $(if $(NF_KMOD),,$(call nf_add,IPT_IPV6,CONFIG_IP6_NF_IPTABLES, ip6t_icmp6)))' "$include_netfilter_mk"; then
         echo "Updating IPT_IPV6 userland mapping for Linux 6.12/6.18..."
         sed -i 's@$(eval $(if $(NF_KMOD),,$(call nf_add,IPT_IPV6,CONFIG_IP6_NF_IPTABLES, ip6t_icmp6)))@$(eval $(if $(NF_KMOD),,$(call nf_add,IPT_IPV6,CONFIG_IP6_NF_IPTABLES, ip6t_icmp6, lt 6.12)))@' "$include_netfilter_mk"
         sed -i '/CONFIG_IP6_NF_IPTABLES, ip6t_icmp6, lt 6\.12))/a$(eval $(if $(NF_KMOD),,$(call nf_add,IPT_IPV6,CONFIG_IP6_NF_IPTABLES_LEGACY, ip6t_icmp6, ge 6.12)))' "$include_netfilter_mk"
     fi
-
     if grep -q 'DEPENDS:=+!LINUX_6_12:kmod-iptables' "$netfilter_mk"; then
         echo "Applying netfilter kmod clash workaround for Linux 6.12/6.18..."
         sed -i 's/DEPENDS:=+!LINUX_6_12:kmod-iptables/DEPENDS:=+(!(LINUX_6_12||LINUX_6_18)):kmod-iptables/' "$netfilter_mk"
         return 0
     fi
-
     if grep -q 'DEPENDS:=+(!LINUX_6_12&&!LINUX_6_18):kmod-iptables' "$netfilter_mk"; then
         echo "Normalizing netfilter kmod clash workaround expression..."
         sed -i 's/DEPENDS:=+(!LINUX_6_12\&\&!LINUX_6_18):kmod-iptables/DEPENDS:=+(!(LINUX_6_12||LINUX_6_18)):kmod-iptables/' "$netfilter_mk"
         return 0
     fi
-
     echo "Netfilter kmod clash workaround target not found in $netfilter_mk" >&2
     return 1
 }
@@ -543,12 +483,10 @@ install_pbr_cmcc() {
     local pbr_dir="$pbr_pkg_dir/files/usr/share/pbr"
     local pbr_conf="$pbr_pkg_dir/files/etc/config/pbr"
     local pbr_makefile="$pbr_pkg_dir/Makefile"
-
     if [ -d "$pbr_pkg_dir" ]; then
         echo "正在安装 PBR CMCC 配置文件..."
         install -Dm644 "$BASE_PATH/patches/pbr.user.cmcc" "$pbr_dir/pbr.user.cmcc"
         install -Dm644 "$BASE_PATH/patches/pbr.user.cmcc6" "$pbr_dir/pbr.user.cmcc6"
-
         if [ -f "$pbr_makefile" ]; then
             if ! grep -q "pbr.user.cmcc" "$pbr_makefile"; then
                 echo "正在修改 PBR Makefile 添加安装规则..."
@@ -558,7 +496,6 @@ install_pbr_cmcc() {
             fi
         fi
     fi
-
     if [ -f "$pbr_conf" ]; then
         if ! grep -q "pbr.user.cmcc" "$pbr_conf"; then
             echo "正在添加 PBR CMCC 配置条目..."
@@ -580,35 +517,24 @@ config include\\
 fix_pbr_ip_forward() {
     local pbr_pkg_dir="$BUILD_DIR/package/feeds/packages/pbr"
     local pbr_init_script="$pbr_pkg_dir/files/etc/init.d/pbr"
-
     if [ ! -d "$pbr_pkg_dir" ]; then
         echo "PBR package directory not found: $pbr_pkg_dir"
         return 1
     fi
-
     if [ ! -f "$pbr_init_script" ]; then
         echo "PBR init script not found: $pbr_init_script"
         return 1
     fi
-
-    # Check if fix is already applied (enabled check already present)
     if grep -q '\[ -n "$enabled" \] && \[ -n "$strict_enforcement" \]' "$pbr_init_script"; then
         echo "PBR IP Forward fix already applied"
         return 0
     fi
-
-    # Check if the original pattern exists that needs fixing
     if ! grep -q '\[ -n "$strict_enforcement" \] && \[ "$(cat /proc/sys/net/ipv4/ip_forward)"' "$pbr_init_script"; then
         echo "PBR IP Forward: 未找到需要修复的代码，可能上游已修复或此版本无此问题"
         return 0
     fi
-
     echo "正在应用 PBR IP Forward 修复..."
-    # Fix: Add enabled check before strict_enforcement check
-    # Original: if [ -n "$strict_enforcement" ] && [ "$(cat /proc/sys/net/ipv4/ip_forward)" != "0" ]; then
-    # Fixed:   if [ -n "$enabled" ] && [ -n "$strict_enforcement" ] && [ "$(cat /proc/sys/net/ipv4/ip_forward)" != "0" ]; then
     sed -i 's/\[ -n "\$strict_enforcement" \] && \[ "\$(cat \/proc\/sys\/net\/ipv4\/ip_forward)"/\[ -n "\$enabled" \] \&\& \[ -n "\$strict_enforcement" \] \&\& \[ "\$(cat \/proc\/sys\/net\/ipv4\/ip_forward)"/' "$pbr_init_script"
-    
     if grep -q '\[ -n "$enabled" \] && \[ -n "$strict_enforcement" \]' "$pbr_init_script"; then
         echo "PBR IP Forward 修复应用成功"
         return 0
@@ -621,26 +547,20 @@ fix_pbr_ip_forward() {
 fix_quectel_cm() {
     local makefile_path="$BUILD_DIR/package/feeds/packages/quectel-cm/Makefile"
     local cmake_patch_path="$BUILD_DIR/package/feeds/packages/quectel-cm/patches/020-cmake.patch"
-
     if [ -f "$makefile_path" ]; then
         echo "正在修复 quectel-cm Makefile..."
-
         sed -i '/^PKG_SOURCE:=/d' "$makefile_path"
         sed -i '/^PKG_SOURCE_URL:=@IMMORTALWRT/d' "$makefile_path"
         sed -i '/^PKG_HASH:=/d' "$makefile_path"
-
         sed -i '/^PKG_RELEASE:=/a\
 \
 PKG_SOURCE_PROTO:=git\
 PKG_SOURCE_URL:=https://github.com/Carton32/quectel-CM.git\
 PKG_SOURCE_VERSION:=$(PKG_VERSION)\
 PKG_MIRROR_HASH:=skip' "$makefile_path"
-
         sed -i 's/^PKG_RELEASE:=2$/PKG_RELEASE:=3/' "$makefile_path"
-
         echo "quectel-cm Makefile 修复完成。"
     fi
-
     if [ -f "$cmake_patch_path" ]; then
         sed -i 's/-cmake_minimum_required(VERSION 2\.4)$/-cmake_minimum_required(VERSION 2.4) /' "$cmake_patch_path"
         sed -i 's/project(quectel-CM)$/project(quectel-CM) /' "$cmake_patch_path"
@@ -653,7 +573,6 @@ set_nginx_default_config() {
         cat >"$nginx_config_path" <<EOF
 config main 'global'
         option uci_enable 'true'
-
 config server '_lan'
         list listen '443 ssl default_server'
         list listen '[::]:443 ssl default_server'
@@ -666,7 +585,6 @@ config server '_lan'
         option ssl_session_cache 'shared:SSL:32k'
         option ssl_session_timeout '64m'
         option access_log 'off; # logd openwrt'
-
 config server 'http_only'
         list listen '80'
         list listen '[::]:80'
@@ -675,7 +593,6 @@ config server 'http_only'
         option access_log 'off; # logd openwrt'
 EOF
     fi
-
     local nginx_template="$BUILD_DIR/feeds/packages/net/nginx-util/files/uci.conf.template"
     if [ -f "$nginx_template" ]; then
         if ! grep -q "client_body_in_file_only clean;" "$nginx_template"; then
@@ -684,9 +601,7 @@ EOF
 \tclient_body_temp_path /mnt/tmp;" "$nginx_template"
         fi
     fi
-
     local luci_support_script="$BUILD_DIR/feeds/packages/net/nginx/files-luci-support/60_nginx-luci-support"
-
     if [ -f "$luci_support_script" ]; then
         if ! grep -q "client_body_in_file_only off;" "$luci_support_script"; then
             echo "正在为 Nginx ubus location 配置应用修复..."
@@ -698,14 +613,8 @@ EOF
 update_uwsgi_limit_as() {
     local cgi_io_ini="$BUILD_DIR/feeds/packages/net/uwsgi/files-luci-support/luci-cgi_io.ini"
     local webui_ini="$BUILD_DIR/feeds/packages/net/uwsgi/files-luci-support/luci-webui.ini"
-
-    if [ -f "$cgi_io_ini" ]; then
-        sed -i 's/^limit-as = .*/limit-as = 8192/g' "$cgi_io_ini"
-    fi
-
-    if [ -f "$webui_ini" ]; then
-        sed -i 's/^limit-as = .*/limit-as = 8192/g' "$webui_ini"
-    fi
+    [ -f "$cgi_io_ini" ] && sed -i 's/^limit-as = .*/limit-as = 8192/g' "$cgi_io_ini"
+    [ -f "$webui_ini" ] && sed -i 's/^limit-as = .*/limit-as = 8192/g' "$webui_ini"
 }
 
 remove_tweaked_packages() {
@@ -715,4 +624,53 @@ remove_tweaked_packages() {
             sed -i 's/DEFAULT_PACKAGES += $(DEFAULT_PACKAGES.tweak)/# DEFAULT_PACKAGES += $(DEFAULT_PACKAGES.tweak)/g' "$target_mk"
         fi
     fi
+}
+
+#============================
+# 批量调用入口函数，供外部脚本调用
+#============================
+run_all_system_fix(){
+    echo "==========开始执行全部system.sh补丁修复=========="
+    fix_default_set
+    fix_miniupnpd
+    change_dnsmasq2full
+    fix_mk_def_depends
+    fix_kconfig_recursive_dependency
+    update_default_lan_addr
+    remove_something_nss_kmod
+    update_affinity_script
+    apply_hash_fixes
+    update_ath11k_fw
+    fix_mkpkg_format_invalid
+    change_cpuusage
+    update_tcping
+    set_custom_task
+    apply_passwall_tweaks
+    install_opkg_distfeeds
+    update_nss_pbuf_performance
+    set_build_signature
+    update_nss_diag
+    update_menu_location
+    fix_compile_coremark
+    update_dnsmasq_conf
+    add_backup_info_to_sysupgrade
+    update_script_priority
+    update_mosdns_deconfig
+    fix_quickstart
+    update_oaf_deconfig
+    update_geoip
+    fix_rust_compile_error
+    fix_easytier_lua
+    fix_easytier_mk
+    update_nginx_ubus_module
+    fix_openssl_ktls
+    fix_opkg_check
+    fix_netfilter_kmod_clash
+    install_pbr_cmcc
+    fix_pbr_ip_forward
+    fix_quectel_cm
+    set_nginx_default_config
+    update_uwsgi_limit_as
+    remove_tweaked_packages
+    echo "==========全部system.sh补丁执行完成=========="
 }
