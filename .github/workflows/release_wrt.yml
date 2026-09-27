@@ -130,6 +130,18 @@ jobs:
       - name: Clean Old Build Cache Before Compile
         run: |
           rm -rf ./action_build/build_dir ./action_build/dl ./action_build/tmp ./action_build/staging_dir || true
+      # ===================== 【核心修复：关闭kmod-iptables，方案1 firewall4+nft】====================
+      - name: Disable kmod-iptables (Fix ipt module conflict, use firewall4 nft-compat)
+        run: |
+          cd ./action_build
+          # 删除CONFIG_PACKAGE_kmod-iptables=y 行
+          sed -i '/CONFIG_PACKAGE_kmod-iptables/d' .config || true
+          # 添加注释，标记不选中kmod-iptables
+          echo "# CONFIG_PACKAGE_kmod-iptables is not set" >> .config
+          # 校验输出，确认修改成功，方便看日志
+          grep -E "kmod-iptables|kmod-nf-ipt" .config
+          cd -
+      # =============================================================================================
       # 移除staging_dir缓存，避免旧包污染导致install 255，仅保留ccache
       - name: Cache Dependencies
         uses: actions/cache@v6.1.0
@@ -168,7 +180,7 @@ jobs:
           echo "Kernel: $(uname -r)"
           echo "=================================================="
           echo "[CPU]"
-          lscpu | grep -E "Model name|Architecture|CPU\\(s\\)|Thread\\(s\\) per core|Core\\(s\\) per socket|CPU max MHz"
+          lscpu | grep -E "Model name|Architecture|CPU\(s\)|Thread\(s\) per core|Core\(s\) per socket|CPU max MHz"
           echo "=================================================="
           echo "[Memory]"
           free -h
@@ -207,7 +219,7 @@ jobs:
           echo "Uptime: $(uptime -p)"
           echo "===================================================="
           echo "[CPU]"
-          lscpu | grep -E "Model name|Architecture|CPU\\(s\\)|Thread\\(s\\) per core|Core\\(s\\) per socket|CPU max MHz"
+          lscpu | grep -E "Model name|Architecture|CPU\(s\)|Thread\(s\) per core|Core\(s\) per socket|CPU max MHz"
           echo "===================================================="
           echo "[Memory]"
           free -h
