@@ -126,22 +126,33 @@ jobs:
         run: |
           # 批量替换所有xray-core包的GitHub地址
           find ./ -path "*package/xray-core/Makefile" -type f -exec sed -i 's|https://github.com/XTLS/Xray-core.git|https://mirror.ghproxy.com/https://github.com/XTLS/Xray-core.git|g' {} \; || true
+
+      # =====================【核心修复：移动到feeds之后，一次性清除整套传统ipt模块，firewall4+nft兼容模式】====================
+      - name: Disable All Legacy iptables Modules (Fix ip_tables.ko Conflict, Firewall4)
+        run: |
+          cd ./action_build
+          # 删除整套旧iptables内核模块，避免依赖连锁选中
+          sed -i '/CONFIG_PACKAGE_kmod-iptables/d' .config
+          sed -i '/CONFIG_PACKAGE_kmod-ipt-core/d' .config
+          sed -i '/CONFIG_PACKAGE_kmod-ipt-nat/d' .config
+          sed -i '/CONFIG_PACKAGE_kmod-ipt-nat6/d' .config
+          sed -i '/CONFIG_PACKAGE_kmod-ipt-physdev/d' .config
+          # 标记全部不选中
+          echo "# CONFIG_PACKAGE_kmod-iptables is not set" >> .config
+          echo "# CONFIG_PACKAGE_kmod-ipt-core is not set" >> .config
+          echo "# CONFIG_PACKAGE_kmod-ipt-nat is not set" >> .config
+          echo "# CONFIG_PACKAGE_kmod-ipt-nat6 is not set" >> .config
+          echo "# CONFIG_PACKAGE_kmod-ipt-physdev is not set" >> .config
+          # 打印校验日志，Action日志可直接查看结果
+          echo "====== Check config after modify ======"
+          grep -E "kmod-iptables|kmod-ipt-core|kmod-ipt-nat|kmod-nf-ipt|kmod-nft-compat" .config
+          cd -
+      # =====================================================================================================================
+
       # 构建前清空旧编译缓存，stamp残留是install报错主要诱因
       - name: Clean Old Build Cache Before Compile
         run: |
           rm -rf ./action_build/build_dir ./action_build/dl ./action_build/tmp ./action_build/staging_dir || true
-      # ===================== 【核心修复：关闭kmod-iptables，方案1 firewall4+nft】====================
-      - name: Disable kmod-iptables (Fix ipt module conflict, use firewall4 nft-compat)
-        run: |
-          cd ./action_build
-          # 删除CONFIG_PACKAGE_kmod-iptables=y 行
-          sed -i '/CONFIG_PACKAGE_kmod-iptables/d' .config || true
-          # 添加注释，标记不选中kmod-iptables
-          echo "# CONFIG_PACKAGE_kmod-iptables is not set" >> .config
-          # 校验输出，确认修改成功，方便看日志
-          grep -E "kmod-iptables|kmod-nf-ipt" .config
-          cd -
-      # =============================================================================================
       # 移除staging_dir缓存，避免旧包污染导致install 255，仅保留ccache
       - name: Cache Dependencies
         uses: actions/cache@v6.1.0
