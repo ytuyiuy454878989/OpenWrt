@@ -126,8 +126,8 @@ jobs:
         run: |
           # 批量替换所有xray-core包的GitHub地址
           find ./ -path "*package/xray-core/Makefile" -type f -exec sed -i 's|https://github.com/XTLS/Xray-core.git|https://mirror.ghproxy.com/https://github.com/XTLS/Xray-core.git|g' {} \; || true
-      # =====================【修复1：修改ini种子配置，源头关闭传统ipt模块】====================
-      - name: Disable All Legacy iptables Modules INI (Fix ip_tables.ko Conflict, Firewall4)
+      # =====================【修复1：修改ini种子配置，删除kmod-iptables】====================
+      - name: Remove kmod-iptables from INI (保留NSS ECM,允许kmod-nf-ipt)
         run: |
           INI_FILE="./wrt_core/compilecfg/${{ inputs.model }}.ini"
           echo "当前机型ini文件路径: ${INI_FILE}"
@@ -135,45 +135,35 @@ jobs:
             echo "ERROR: ini文件不存在 ${INI_FILE}"
             exit 1
           fi
-          # 删除ini里选中的旧ipt内核模块全套
+          # 只删除冲突的kmod-iptables，**保留kmod-nf-ipt（NSS ECM需要）**
           sed -i '/kmod-iptables/d' ${INI_FILE}
-          sed -i '/kmod-ipt-core/d' ${INI_FILE}
-          sed -i '/kmod-ipt-nat/d' ${INI_FILE}
-          sed -i '/kmod-ipt-nat6/d' ${INI_FILE}
-          sed -i '/kmod-ipt-physdev/d' ${INI_FILE}
-          sed -i '/kmod-nf-ipt/d' ${INI_FILE}
-          sed -i '/kmod-nft-compat/d' ${INI_FILE}
-          # 打印ini中ipt相关行，校验是否已经清除
+          # 打印ini中ipt相关行，校验
           echo "====== Check ini after modify ======"
-          grep -E "kmod-iptables|kmod-ipt-core|kmod-ipt-nat|kmod-nf-ipt|kmod-nft-compat" ${INI_FILE} || echo "没有找到旧ipt模块，清除成功"
+          grep -E "kmod-iptables|kmod-nf-ipt" ${INI_FILE} || echo "kmod-iptables已清除"
       # =====================================================================================================================
-      # =====================【修复2：进入action_build，对最终.config强制清理，对抗feeds依赖自动回写】====================
-      - name: Force disable iptables modules in .config (Pure nftables/Firewall4 Solution A)
-        run: |
-          cd ./action_build
-          # 执行defconfig生成基础.config
-          make defconfig
-          # 强制全部取消全套冲突iptables相关内核模块
-          sed -i 's/CONFIG_PACKAGE_kmod-nf-ipt=y/# CONFIG_PACKAGE_kmod-nf-ipt is not set/g' .config
-          sed -i 's/CONFIG_PACKAGE_kmod-iptables=y/# CONFIG_PACKAGE_kmod-iptables is not set/g' .config
-          sed -i 's/CONFIG_PACKAGE_kmod-ipt-core=y/# CONFIG_PACKAGE_kmod-ipt-core is not set/g' .config
-          sed -i 's/CONFIG_PACKAGE_kmod-nft-compat=y/# CONFIG_PACKAGE_kmod-nft-compat is not set/g' .config
-          sed -i 's/CONFIG_PACKAGE_kmod-ipt-nat=y/# CONFIG_PACKAGE_kmod-ipt-nat is not set/g' .config
-          sed -i 's/CONFIG_PACKAGE_kmod-ipt-nat6=y/# CONFIG_PACKAGE_kmod-ipt-nat6 is not set/g' .config
-          sed -i 's/CONFIG_PACKAGE_kmod-ipt-physdev=y/# CONFIG_PACKAGE_kmod-ipt-physdev is not set/g' .config
-          # 再次defconfig，重新解析依赖，防止被依赖重新勾选
-          make defconfig
-          # 输出校验日志，CI可直接看结果，全部不能出现=y
-          echo "==================== Verify config result ===================="
-          grep -E "kmod-nf-ipt|kmod-iptables|kmod-ipt-core|kmod-nft-compat|kmod-ipt-nat|kmod-ipt-nat6|kmod-ipt-physdev" .config
-          echo "=============================================================="
-          cd -
-      # =====================================================================================================================
-      # 构建前清空旧编译缓存，stamp残留是install报错主要诱因
-      - name: Clean Old Build Cache Before Compile
+      # 【前置清理】构建前清空旧编译缓存
+      - name: Clean Old Build Cache Before Config Gen
         run: |
           rm -rf ./action_build/build_dir ./action_build/dl ./action_build/tmp ./action_build/staging_dir || true
-      # 移除staging_dir缓存，避免旧包污染导致install 255，仅保留ccache
+      # =====================【修复2：进入action_build，强制取消kmod-iptables，允许kmod-nf-ipt】====================
+      - name: Force disable kmod-iptables ONLY (保留NSS ECM需要的kmod-nf-ipt)
+        run: |
+          cd ./action_build
+          make defconfig
+          # 重点：只关闭 kmod-iptables，不要关闭kmod-nf-ipt！NSS ECM依赖它
+          sed -i 's/CONFIG_PACKAGE_kmod-iptables=y/# CONFIG_PACKAGE_kmod-iptables is not set/g' .config
+          # 再次defconfig，让依赖重新计算
+          make defconfig
+          # 校验输出：kmod-iptables必须是not set；kmod-nf-ipt=y 是正常（NSS ECM依赖）
+          echo "==================== Verify config result ===================="
+          grep -E "CONFIG_PACKAGE_kmod-iptables|CONFIG_PACKAGE_kmod-nf-ipt" .config
+          echo "=============================================================="
+          # 扫描所有包，查找哪个插件依赖kmod-iptables，输出日志用于排查
+          echo "===== 扫描所有Makefile查找依赖kmod-iptables的插件 ====="
+          grep -r "kmod-iptables" --include="Makefile" package/ feeds/ || echo "未找到插件硬编码依赖kmod-iptables"
+          cd -
+      # =====================================================================================================================
+      # 缓存配置
       - name: Cache Dependencies
         uses: actions/cache@v6.1.0
         with:
