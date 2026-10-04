@@ -6,7 +6,6 @@ on:
     # 每 3 天编译一次（UTC 时间，北京时间 = UTC+8）
     # UTC 20:00 = 北京时间 04:00
     - cron: '0 20 */3 * *'
-
   workflow_dispatch:
     inputs:
       model:
@@ -63,7 +62,7 @@ jobs:
           echo -e "$(sudo lshw -short -C memory | grep GiB) \n"
           echo "--------------------------硬盘信息--------------------------"
           echo "硬盘数量：$(ls /dev/sd* | grep -v [1-9] | wc -l)" && df -hT
-      # 前置磁盘扩容清理（移到最前，防止依赖安装时磁盘不足）
+      # 前置磁盘扩容清理
       - name: Free Disk Space(清理磁盘空间)
         uses: endersonmenezes/free-disk-space@v3
         with:
@@ -78,11 +77,10 @@ jobs:
           rm_cmd: "rm"
           rmz_version: "3.1.1"
           testing: false
-      # 完整编译依赖补充：增加golang+证书修复xray编译
+      # 完整编译依赖补充
       - name: Build System Setup(安装依赖环境)
         run: |
           sudo bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
-          # 补充xray-core编译必备依赖
           sudo -E apt -yqq install dos2unix libfuse-dev golang-go ca-certificates
           sudo -E update-ca-certificates
           sudo -E apt -yqq autoremove --purge
@@ -104,66 +102,46 @@ jobs:
             chmod +x "$script"
           done
           ./wrt_core/pre_clone_action.sh ${{ inputs.model }}
-      #====================【新增修复步骤 START】====================
-      - name: Fix luci-app-mosdns dependency(修复mosdns geo2txt依赖)
+      #==================== Fix mosdns ====================
+      - name: Fix luci-app-mosdns dependency
         run: |
           cd ./action_build
-          # 删除原有旧mosdns、v2ray-geodata，避免冲突
-          rm -rf package/luci-app-mosdns
-          rm -rf feeds/packages/net/v2ray-geodata
-          rm -rf package/mosdns
-          # 拉取sbwml v5完整版mosdns套件（自带geo2txt,v2dat）
+          rm -rf package/luci-app-mosdns feeds/packages/net/v2ray-geodata package/mosdns
           git clone https://github.com/sbwml/luci-app-mosdns -b v5 package/mosdns
-          #拉取geodata规则库
           git clone https://github.com/sbwml/v2ray-geodata package/v2ray-geodata
-          #更新feeds，让编译系统识别新增依赖包
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           cd -
-      #====================【新增修复步骤 END】====================
-      # 【关键修复】替换Xray源码地址为ghproxy加速，解决拉取失败Error255
+      # Xray ghproxy镜像替换
       - name: Replace Xray-core Git Source Mirror
         run: |
-          # 批量替换所有xray-core包的GitHub地址
           find ./ -path "*package/xray-core/Makefile" -type f -exec sed -i 's|https://github.com/XTLS/Xray-core.git|https://mirror.ghproxy.com/https://github.com/XTLS/Xray-core.git|g' {} \; || true
-      # =====================【修复1：修改ini种子配置，删除kmod-iptables】====================
-      - name: Remove kmod-iptables from INI (保留NSS ECM,允许kmod-nf-ipt)
+      # 修改ini：删除kmod‑iptables、bmx7包，保留kmod‑nf‑ipt(NSS‑ECM)
+      - name: Remove kmod‑iptables & bmx7 from INI
         run: |
           INI_FILE="./wrt_core/compilecfg/${{ inputs.model }}.ini"
-          echo "当前机型ini文件路径: ${INI_FILE}"
-          if [ ! -f "${INI_FILE}" ];then
-            echo "ERROR: ini文件不存在 ${INI_FILE}"
-            exit 1
-          fi
-          # 只删除冲突的kmod-iptables，**保留kmod-nf-ipt（NSS ECM需要）**
-          sed -i '/kmod-iptables/d' ${INI_FILE}
-          # 打印ini中ipt相关行，校验
-          echo "====== Check ini after modify ======"
-          grep -E "kmod-iptables|kmod-nf-ipt" ${INI_FILE} || echo "kmod-iptables已清除"
-      # =====================================================================================================================
-      # 【前置清理】构建前清空旧编译缓存
+          echo "INI_FILE: ${INI_FILE}"
+          [ ! -f "${INI_FILE}" ] && echo "ERROR: ini not found" && exit 1
+          sed -i '/kmod-iptables/d' "${INI_FILE}"
+          sed -i '/bmx7/d' "${INI_FILE}"
+          echo "==== Check ini after modify ===="
+          grep -E "kmod-iptables|kmod-nf-ipt|bmx7" "${INI_FILE}" || echo "kmod‑iptables & bmx7 removed"
+      # 清空旧编译缓存
       - name: Clean Old Build Cache Before Config Gen
         run: |
           rm -rf ./action_build/build_dir ./action_build/dl ./action_build/tmp ./action_build/staging_dir || true
-      # =====================【修复2：进入action_build，强制取消kmod-iptables，允许kmod-nf-ipt】====================
-      - name: Force disable kmod-iptables ONLY (保留NSS ECM需要的kmod-nf-ipt)
+      # .config强制关闭kmod‑iptables
+      - name: Force disable kmod‑iptables (keep kmod‑nf‑ipt for NSS‑ECM)
         run: |
           cd ./action_build
           make defconfig
-          # 重点：只关闭 kmod-iptables，不要关闭kmod-nf-ipt！NSS ECM依赖它
           sed -i 's/CONFIG_PACKAGE_kmod-iptables=y/# CONFIG_PACKAGE_kmod-iptables is not set/g' .config
-          # 再次defconfig，让依赖重新计算
           make defconfig
-          # 校验输出：kmod-iptables必须是not set；kmod-nf-ipt=y 是正常（NSS ECM依赖）
-          echo "==================== Verify config result ===================="
+          echo "==== Verify config ===="
           grep -E "CONFIG_PACKAGE_kmod-iptables|CONFIG_PACKAGE_kmod-nf-ipt" .config
-          echo "=============================================================="
-          # 扫描所有包，查找哪个插件依赖kmod-iptables，输出日志用于排查
-          echo "===== 扫描所有Makefile查找依赖kmod-iptables的插件 ====="
-          grep -r "kmod-iptables" --include="Makefile" package/ feeds/ || echo "未找到插件硬编码依赖kmod-iptables"
+          grep -r "kmod-iptables" --include="Makefile" package/ feeds/ || true
           cd -
-      # =====================================================================================================================
-      # 缓存配置
+      # 缓存
       - name: Cache Dependencies
         uses: actions/cache@v6.1.0
         with:
@@ -172,7 +150,7 @@ jobs:
           key: ${{ matrix.os }}-${{ hashFiles('**/repo_flag') }}-${{ env.BUILD_DATE }}
           restore-keys: |
             ${{ matrix.os }}-${{ hashFiles('**/repo_flag') }}-
-      - name: Check Scripts(将所有sh文件赋予执行权限)
+      - name: Check Scripts
         run: |
           find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\)$" -exec dos2unix {} \; -exec chmod +x {} \;
       - name: Check Caches
@@ -193,34 +171,35 @@ jobs:
                 find "$dir" -type f -exec touch {} +
             done
           fi
-      - name: Machine Information (Pre-build)
+      - name: Machine Information (Pre‑build)
         run: |
-          echo "=============== Pre-build Snapshot ==============="
+          echo "=============== Pre‑build Snapshot ==============="
           echo "Time: $(date '+%F %T %Z')"
           echo "Runner: ${RUNNER_NAME} (${RUNNER_OS}/${RUNNER_ARCH})"
           echo "Kernel: $(uname -r)"
-          echo "=================================================="
-          echo "[CPU]"
-          lscpu | grep -E "Model name|Architecture|CPU\(s\)|Thread\(s\) per core|Core\(s\) per socket|CPU max MHz"
-          echo "=================================================="
-          echo "[Memory]"
+          lscpu | grep -E "Model name|Architecture|CPU\(s\)|Thread\(s\) per core|Core\(s\) per socket"
           free -h
-          echo "=================================================="
-          echo "[Disk]"
           df -hT
-          echo "--------------------------------------------------"
-          df -hi
-          echo "=================================================="
-          echo "[Workspace]"
-          echo "GITHUB_WORKSPACE=${GITHUB_WORKSPACE}"
-          du -sh "${GITHUB_WORKSPACE}" 2>/dev/null || true
-          du -sh ./action_build/.ccache 2>/dev/null || true
-          du -sh ./action_build/staging_dir 2>/dev/null || true
-          du -sh ./firmware 2>/dev/null || true
-          echo "=================================================="
-      # 【关键修复】编译脚本传入V=sc输出完整日志，定位xray真实报错
+      # --------------------------
+      # 关键：临时修改build.sh的make并发，编译完自动恢复，不改动仓库源文件
+      # --------------------------
+      - name: Patch build.sh reduce make concurrency (no commit change)
+        run: |
+          cp -af ./build.sh ./build.sh.bak
+          # 将脚本里所有 make -jN / make -j$(nproc) 替换为 make -j2 -l2
+          sed -E -i 's/make\s+-j[0-9]+/make -j2 -l2/g' ./build.sh
+          sed -E -i 's/make\s+-j\$\(nproc\)/make -j2 -l2/g' ./build.sh
+          echo "=== build.sh patched preview ==="
+          grep "make -j" ./build.sh || echo "no -j found in build.sh"
+      # 编译固件，超时360分钟，V=sc详细日志
       - name: Build Firmware(编译固件)
+        timeout-minutes: 360
         run: export BUILD_VERBOSE="V=sc" && ./build.sh ${{ inputs.model }}
+      # 恢复原始build.sh备份
+      - name: Restore original build.sh
+        if: always()
+        run: |
+          [ -f ./build.sh.bak ] && mv -f ./build.sh.bak ./build.sh
       - name: Get Kernel Verion
         run: |
           echo "KVER=$(grep -oP "^kernel.*" ./firmware/*.manifest | grep -oP "[4-6]\.[0-9]{1,3}\.[0-9]{1,3}")" >> $GITHUB_ENV
@@ -229,32 +208,15 @@ jobs:
           gh cache list --key ${{ matrix.os }}-${{ hashFiles('**/repo_flag') }}- --json key --jq '.[] | .key' | while read -r key; do
             gh cache delete "$key"
           done
-          echo "========cache status========"
-          echo "ccache: $(du -sh ./action_build/.ccache | cut -f 1)"
-      - name: Machine Information (Post-build)(机器信息)
+          echo "ccache size: $(du -sh ./action_build/.ccache | cut -f 1)"
+      - name: Machine Information (Post‑build)
         run: |
-          echo "=============== Post-build Snapshot ==============="
+          echo "=============== Post‑build Snapshot ==============="
           echo "Time: $(date '+%F %T %Z')"
-          echo "Runner: ${RUNNER_NAME} (${RUNNER_OS}/${RUNNER_ARCH})"
-          echo "Kernel: $(uname -r)"
           echo "Uptime: $(uptime -p)"
-          echo "===================================================="
-          echo "[CPU]"
-          lscpu | grep -E "Model name|Architecture|CPU\(s\)|Thread\(s\) per core|Core\(s\) per socket|CPU max MHz"
-          echo "===================================================="
-          echo "[Memory]"
           free -h
-          echo "===================================================="
-          echo "[Disk]"
           df -hT
-          echo "----------------------------------------------------"
-          df -hi
-          echo "===================================================="
-          echo "[Build Outputs]"
-          du -sh ./action_build/.ccache 2>/dev/null || true
-          du -sh ./firmware 2>/dev/null || true
-          echo "Firmware file count: $(ls -1 ./firmware 2>/dev/null | wc -l)"
-          echo "===================================================="
+          echo "Firmware count: $(ls -1 ./firmware 2>/dev/null | wc -l)"
       - name: Package OpenWrt Firmware(打包固件)
         if: ${{ inputs.model == 'n1_immwrt' }}
         uses: unifreq/openwrt_packit@8007d3efd49bb42aa20c5755a50af21dc7a438e1
@@ -271,18 +233,16 @@ jobs:
           echo "WIFI密码: 12345678" >> release_body.txt
           echo "LAN地址: 192.168.1.1" >> release_body.txt
           echo "插件：" >> release_body.txt
-          echo "$(grep -oP "luci-app(-[a-zA-Z0-9]{1,}){1,}" ./firmware/*.manifest | awk -F":" '{print $NF}')"  >> release_body.txt
+          grep -oP "luci-app(-[a-zA-Z0-9]{1,}){1,}" ./firmware/*.manifest | awk -F":" '{print $NF}' >> release_body.txt
       - name: Release Firmware(发布固件)
         uses: softprops/action-gh-release@v3.0.1
         with:
           tag_name: ${{ env.BUILD_DATE }}_${{ inputs.model }}
           files: ${{ inputs.model == 'n1_immwrt' && env.PACKAGED_OUTPUTPATH || './firmware' }}/*.*
           body_path: ./release_body.txt
-      - name: Post-clean Disk Space
+      - name: Post‑clean Disk Space
         if: always()
         run: |
-          rm -rf ./action_build/build_dir 2>/dev/null || true
-          rm -rf ./action_build/dl 2>/dev/null || true
+          rm -rf ./action_build/build_dir ./action_build/dl 2>/dev/null || true
           sudo apt-get clean -y 2>/dev/null || true
-          echo "===== Disk Status After Post-clean ====="
           df -hT
