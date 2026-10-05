@@ -127,7 +127,9 @@ jobs:
           echo "BUILD_SRC=$BUILD_SRC" >> $GITHUB_ENV
           export BUILD_DIR_KEY=$(awk -F"=" '/BUILD_DIR/ {print $NF}' "./wrt_core/compilecfg/${{ inputs.model }}.ini")
           echo "BUILD_DIR_KEY=$BUILD_DIR_KEY" >> $GITHUB_ENV
-
+      - name: Check Scripts(将所有sh文件赋予执行权限)
+        run: |
+          find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\)$" -exec dos2unix {} \; -exec chmod +x {} \;
       - name: Pre Clone
         run: |
           chmod +x ./wrt_core/pre_clone_action.sh
