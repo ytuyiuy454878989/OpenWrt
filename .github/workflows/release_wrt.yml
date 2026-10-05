@@ -382,8 +382,4 @@ jobs:
         uses: AnimMouse/setup-rclone/update-config@v1
         with:
           rclone_config_secret_name: RCLONE_CONFIG
-          token: ${{ steps.app-token.outputs.token }}        if: always()
-        run: |
-          rm -rf ./action_build/build_dir ./action_build/dl 2>/dev/null || true
-          sudo apt-get clean -y 2>/dev/null || true
-          df -hT
+          token: ${{ steps.app-token.outputs.token }}
