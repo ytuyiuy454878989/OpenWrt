@@ -116,21 +116,22 @@ jobs:
       - name: Replace Xray-core Git Source Mirror
         run: |
           find ./ -path "*package/xray-core/Makefile" -type f -exec sed -i 's|https://github.com/XTLS/Xray-core.git|https://mirror.ghproxy.com/https://github.com/XTLS/Xray-core.git|g' {} \; || true
-      # 修改ini：删除kmod‑iptables、bmx7包，保留kmod‑nf‑ipt(NSS‑ECM)
-      - name: Remove kmod‑iptables & bmx7 from INI
+      # 修改ini：删除全部iptables相关包，bmx7包，保留kmod‑nf‑ipt(NSS‑ECM)
+      - name: Remove iptables series & bmx7 from INI
         run: |
           INI_FILE="./wrt_core/compilecfg/${{ inputs.model }}.ini"
           echo "INI_FILE: ${INI_FILE}"
           [ ! -f "${INI_FILE}" ] && echo "ERROR: ini not found" && exit 1
           sed -i '/kmod-iptables/d' "${INI_FILE}"
+          sed -i '/iptables/d' "${INI_FILE}"
           sed -i '/bmx7/d' "${INI_FILE}"
           echo "==== Check ini after modify ===="
-          grep -E "kmod-iptables|kmod-nf-ipt|bmx7" "${INI_FILE}" || echo "kmod‑iptables & bmx7 removed"
+          grep -E "kmod-iptables|kmod-nf-ipt|iptables|bmx7" "${INI_FILE}" || echo "iptables系列包 & bmx7 removed"
       # 清空旧编译缓存
       - name: Clean Old Build Cache Before Config Gen
         run: |
           rm -rf ./action_build/build_dir ./action_build/dl ./action_build/tmp ./action_build/staging_dir || true
-      # .config强制关闭kmod‑iptables 【方案A，二次锁死对抗依赖回写】
+      # .config强制关闭kmod‑iptables 【方案A增强】
       - name: Force disable kmod‑iptables (keep kmod‑nf‑ipt for NSS‑ECM)
         run: |
           set -x
@@ -152,6 +153,21 @@ jobs:
           echo "# CONFIG_PACKAGE_iptables is not set" >> .config
 
           echo "==== Verify config final state ===="
+          grep -E "CONFIG_PACKAGE_kmod-iptables|CONFIG_PACKAGE_kmod-nf-ipt|CONFIG_PACKAGE_iptables" .config
+          cd -
+      # 新增：patch feeds Makefile，移除所有包对kmod-iptables/iptables的依赖
+      - name: Patch feeds Makefile remove iptables dependency
+        run: |
+          set -x
+          cd ./action_build
+          # 删除所有Makefile里DEPENDS字段中的kmod-iptables、iptables依赖
+          find package feeds -name "Makefile" -type f -exec sed -i 's/\(DEPENDS:.*\)kmod-iptables/\1/g' {} \;
+          find package feeds -name "Makefile" -type f -exec sed -i 's/\(DEPENDS:.*\)iptables/\1/g' {} \;
+          find package feeds -name "Makefile" -type f -exec sed -i 's/\(DEPENDS.*\)kmod-iptables/\1/g' {} \;
+          find package feeds -name "Makefile" -type f -exec sed -i 's/\(DEPENDS.*\)iptables/\1/g' {} \;
+          # 再次更新config
+          make defconfig
+          echo "==== After patch feeds check config ===="
           grep -E "CONFIG_PACKAGE_kmod-iptables|CONFIG_PACKAGE_kmod-nf-ipt|CONFIG_PACKAGE_iptables" .config
           cd -
       # 缓存
