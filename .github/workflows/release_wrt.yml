@@ -130,16 +130,29 @@ jobs:
       - name: Clean Old Build Cache Before Config Gen
         run: |
           rm -rf ./action_build/build_dir ./action_build/dl ./action_build/tmp ./action_build/staging_dir || true
-      # .config强制关闭kmod‑iptables
+      # .config强制关闭kmod‑iptables 【方案A，二次锁死对抗依赖回写】
       - name: Force disable kmod‑iptables (keep kmod‑nf‑ipt for NSS‑ECM)
         run: |
+          set -x
           cd ./action_build
           make defconfig
-          sed -i 's/CONFIG_PACKAGE_kmod-iptables=y/# CONFIG_PACKAGE_kmod-iptables is not set/g' .config
+
+          # 第一次移除
+          sed -i '/CONFIG_PACKAGE_kmod-iptables/d' .config
+          echo "# CONFIG_PACKAGE_kmod-iptables is not set" >> .config
+          sed -i '/CONFIG_PACKAGE_iptables/d' .config
+          echo "# CONFIG_PACKAGE_iptables is not set" >> .config
+
           make defconfig
-          echo "==== Verify config ===="
-          grep -E "CONFIG_PACKAGE_kmod-iptables|CONFIG_PACKAGE_kmod-nf-ipt" .config
-          grep -r "kmod-iptables" --include="Makefile" package/ feeds/ || true
+
+          # 二次强制锁死，防止defconfig把包重新勾选
+          sed -i '/CONFIG_PACKAGE_kmod-iptables/d' .config
+          echo "# CONFIG_PACKAGE_kmod-iptables is not set" >> .config
+          sed -i '/CONFIG_PACKAGE_iptables/d' .config
+          echo "# CONFIG_PACKAGE_iptables is not set" >> .config
+
+          echo "==== Verify config final state ===="
+          grep -E "CONFIG_PACKAGE_kmod-iptables|CONFIG_PACKAGE_kmod-nf-ipt|CONFIG_PACKAGE_iptables" .config
           cd -
       # 缓存
       - name: Cache Dependencies
