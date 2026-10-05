@@ -129,7 +129,9 @@ jobs:
           echo "BUILD_DIR_KEY=$BUILD_DIR_KEY" >> $GITHUB_ENV
 
       - name: Pre Clone
-        run: ./wrt_core/pre_clone_action.sh ${{ inputs.model }}
+        run: |
+          chmod +x ./wrt_core/pre_clone_action.sh
+          ./wrt_core/pre_clone_action.sh ${{ inputs.model }}
 
       - name: Cache Dependencies
         uses: actions/cache@v6
