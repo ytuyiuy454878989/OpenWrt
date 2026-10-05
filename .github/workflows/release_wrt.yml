@@ -68,10 +68,10 @@ on:
 env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+#CI权限
 permissions:
-  actions: write
   contents: write
-
+  actions: write
 jobs:
   build:
     name: Build (${{ inputs.model }} on ${{ matrix.os }})
