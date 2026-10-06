@@ -185,14 +185,6 @@ jobs:
           du -sh ./action_build/staging_dir 2>/dev/null || true
           du -sh ./firmware 2>/dev/null || true
           echo "=================================================="
-
-      # ==========新增：编译前执行 make clean 清理编译产物，解决ko文件冲突==========
-      - name: Run make clean before compile
-        run: |
-          cd action_build
-          make clean
-          cd -
-
       # 【关键修复】编译脚本传入V=sc输出完整日志，定位xray真实报错
       - name: Build Firmware(编译固件)
         run: export BUILD_VERBOSE="V=sc" && ./build.sh ${{ inputs.model }}
