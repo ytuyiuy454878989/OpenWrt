@@ -147,8 +147,7 @@ jobs:
           sed -i 's/CONFIG_PACKAGE_iptables-nft=y/CONFIG_PACKAGE_iptables-nft=y/' .config
           sed -i 's/CONFIG_PACKAGE_iptables-legacy=n/CONFIG_PACKAGE_iptables-legacy=n/' .config || true
 
-          # make clean + defconfig，把sed修改固化到配置，防止feeds回写覆盖
-          make clean
+          # 仅defconfig固化配置，移除make clean
           make defconfig
 
           # 打印关键配置用于action日志调试，确认已经n
