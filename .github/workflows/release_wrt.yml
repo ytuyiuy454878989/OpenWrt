@@ -126,6 +126,36 @@ jobs:
         run: |
           # 批量替换所有xray-core包的GitHub地址
           find ./ -path "*package/xray-core/Makefile" -type f -exec sed -i 's|https://github.com/XTLS/Xray-core.git|https://mirror.ghproxy.com/https://github.com/XTLS/Xray-core.git|g' {} \; || true
+
+      ###########################################################################
+      # ========= 重点修复：解决 kmod-nf-ipt / kmod-iptables ko文件冲突 ==========
+      ###########################################################################
+      - name: Fix netfilter iptables/nftables module conflict
+        run: |
+          set -e
+          cd ./action_build
+          # feeds更新后，强制关闭冲突的旧iptables内核模块
+          sed -i 's/CONFIG_PACKAGE_kmod-nf-ipt=y/CONFIG_PACKAGE_kmod-nf-ipt=n/' .config || true
+          sed -i 's/CONFIG_PACKAGE_kmod-ipt-core=y/CONFIG_PACKAGE_kmod-ipt-core=n/' .config || true
+          sed -i 's/CONFIG_PACKAGE_kmod-ipt-conntrack=y/CONFIG_PACKAGE_kmod-ipt-conntrack=n/' .config || true
+          sed -i 's/CONFIG_PACKAGE_kmod-ipt-filter=y/CONFIG_PACKAGE_kmod-ipt-filter=n/' .config || true
+          sed -i 's/CONFIG_PACKAGE_kmod-ipt-nat=y/CONFIG_PACKAGE_kmod-ipt-nat=n/' .config || true
+          sed -i 's/CONFIG_PACKAGE_kmod-ipt-raw=y/CONFIG_PACKAGE_kmod-ipt-raw=n/' .config || true
+
+          # 确保启用nftables全家，使用nft而不是legacy iptables
+          sed -i 's/CONFIG_PACKAGE_nftables=y/CONFIG_PACKAGE_nftables=y/' .config
+          sed -i 's/CONFIG_PACKAGE_iptables-nft=y/CONFIG_PACKAGE_iptables-nft=y/' .config
+          sed -i 's/CONFIG_PACKAGE_iptables-legacy=n/CONFIG_PACKAGE_iptables-legacy=n/' .config || true
+
+          # make clean + defconfig，把sed修改固化到配置，防止feeds回写覆盖
+          make clean
+          make defconfig
+
+          # 打印关键配置用于action日志调试，确认已经n
+          echo "==== Check conflict kmod config status ===="
+          grep -E "kmod-nf-ipt|kmod-ipt-core|iptables-legacy|iptables-nft" .config
+          cd -
+
       # 构建前清空旧编译缓存，stamp残留是install报错主要诱因
       - name: Clean Old Build Cache Before Compile
         run: |
@@ -168,7 +198,7 @@ jobs:
           echo "Kernel: $(uname -r)"
           echo "=================================================="
           echo "[CPU]"
-          lscpu | grep -E "Model name|Architecture|CPU\\(s\\)|Thread\\(s\\) per core|Core\\(s\\) per socket|CPU max MHz"
+          lscpu | grep -E "Model name|Architecture|CPU\(s\)|Thread\(s\) per core|Core\(s\) per socket|CPU max MHz"
           echo "=================================================="
           echo "[Memory]"
           free -h
@@ -207,7 +237,7 @@ jobs:
           echo "Uptime: $(uptime -p)"
           echo "===================================================="
           echo "[CPU]"
-          lscpu | grep -E "Model name|Architecture|CPU\\(s\\)|Thread\\(s\\) per core|Core\\(s\\) per socket|CPU max MHz"
+          lscpu | grep -E "Model name|Architecture|CPU\(s\)|Thread\(s\) per core|Core\(s\) per socket|CPU max MHz"
           echo "===================================================="
           echo "[Memory]"
           free -h
